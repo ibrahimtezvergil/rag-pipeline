@@ -32,7 +32,7 @@
 - [x] PDF loader — ≤6 sayfa: Gemini direct PDF path / >6 sayfa: pymupdf layout-aware chunking
 - [x] Structured loader — generic `records[]` → LLM semantic formatter → text embed (rule-based fallback)
 - [x] Web loader — crawl4ai (JS render, nav/footer temizleme, static fallback)
-- [ ] Audio loader — Gemini Embedding 2 native embed (120s clip'lere böl)
+- [x] Audio loader — Gemini Embedding 2 native embed (120s clip window'lara böl)
 - [ ] Video loader — ffmpeg → 120s clip → Gemini Embedding 2 (video modality)
 - [x] DB loader — SQL → SummaryFormatter → text embed
 - [x] Image loader — Gemini Embedding 2 direkt embed (PNG, JPEG)
