@@ -12,7 +12,7 @@ from app.repositories.ingestion import IngestionRepository
 from app.schemas.ingest import IngestRequest
 from app.services.chunking import build_chunks
 from app.services.dispatch import IngestionDispatcher, NullIngestionDispatcher
-from app.services.embedder import embed_text_content, resolve_pdf_embedding
+from app.services.embedder import embed_image_content, embed_text_content, resolve_pdf_embedding
 from app.services.loaders import decode_base64_source, load_source
 from app.services.vector_store import QdrantVectorStore
 
@@ -301,6 +301,13 @@ class IngestionService:
                 str(loaded.get("content", "")),
                 loaded["metadata"],
             )
+        if document.source_type == "image":
+            document_metadata["embedding"] = await embed_image_content(
+                image_bytes=loaded["image_bytes"],
+                title=str(loaded["metadata"]["title"]),
+                mime_type=str(loaded["metadata"]["mime_type"]),
+            )
+            loaded["embedding"] = document_metadata["embedding"]
 
         chunk_rows, vector_chunk_indices = await self._build_chunk_rows(document, loaded)
         chunks = await self.repository.create_chunks(chunk_rows)
@@ -368,6 +375,49 @@ class IngestionService:
         content = str(loaded.get("content", "")).strip()
         metadata = loaded["metadata"]
         title = str(metadata.get("title") or document.title or document.source_ref)
+        if document.source_type == "image":
+            embedding = loaded.get("embedding") or loaded["metadata"].get("embedding")
+            if embedding is None:
+                embedding = await embed_image_content(
+                    image_bytes=loaded["image_bytes"],
+                    title=title,
+                    mime_type=str(metadata["mime_type"]),
+                )
+            parent_row = {
+                "document_id": document.id,
+                "chunk_index": 0,
+                "parent_chunk_id": None,
+                "modality": "image",
+                "token_count": len(content.split()) if content else 0,
+                "page_number": None,
+                "bbox": None,
+                "section_title": title,
+                "acl": [],
+                "embed_model": None,
+                "embed_version": None,
+                "dimension": 0,
+                "content_hash": self._content_hash(content or title),
+                "content": content or title,
+                "vector": [],
+            }
+            vector_row = {
+                "document_id": document.id,
+                "chunk_index": 1,
+                "parent_chunk_id": "__PARENT_INDEX__:0",
+                "modality": "image",
+                "token_count": len(content.split()) if content else 0,
+                "page_number": None,
+                "bbox": None,
+                "section_title": title,
+                "acl": [],
+                "embed_model": str(embedding.get("model") or ""),
+                "embed_version": str(embedding.get("embed_version") or "v1"),
+                "dimension": int(embedding.get("dimension") or len(embedding.get("values", []))),
+                "content_hash": self._content_hash(content or title),
+                "content": content or title,
+                "vector": embedding["values"],
+            }
+            return [parent_row, vector_row], [1]
 
         raw_chunks = build_chunks(document.source_type, content, metadata)
         chunk_rows: list[dict[str, object]] = []

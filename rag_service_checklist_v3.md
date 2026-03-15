@@ -35,7 +35,7 @@
 - [ ] Audio loader — Gemini Embedding 2 native embed (120s clip'lere böl)
 - [ ] Video loader — ffmpeg → 120s clip → Gemini Embedding 2 (video modality)
 - [x] DB loader — SQL → SummaryFormatter → text embed
-- [ ] Image loader — Gemini Embedding 2 direkt embed (PNG, JPEG, max 6/request)
+- [x] Image loader — Gemini Embedding 2 direkt embed (PNG, JPEG)
 - [ ] Email loader — MIME parse → text embed
 - [ ] Chat loader — WhatsApp / Slack export parse
 
