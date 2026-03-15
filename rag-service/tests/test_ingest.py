@@ -300,13 +300,79 @@ async def test_post_ingest_rejects_unsupported_source_type(client, valid_headers
         "/ingest",
         headers=valid_headers,
         json={
+            "source_type": "video",
+            "source_ref": "https://example.com/video.mp4",
+            "mode": "async",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_post_ingest_accepts_audio_url_payload(client, app, valid_headers):
+    async def create_ingestion_job(payload, project_id):
+        assert payload.source_type == "audio"
+        assert str(payload.source_ref) == "https://example.com/audio.mp3"
+        assert payload.source_base64 is None
+        return {
+            "document_id": str(uuid4()),
+            "ingestion_job_id": str(uuid4()),
+            "status": "pending",
+            "mode": "async",
+            "source_type": "audio",
+        }
+
+    app.state.ingestion_service = SimpleNamespace(
+        create_ingestion_job=create_ingestion_job,
+    )
+
+    response = await client.post(
+        "/ingest",
+        headers=valid_headers,
+        json={
             "source_type": "audio",
             "source_ref": "https://example.com/audio.mp3",
             "mode": "async",
         },
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 202
+    assert response.json()["source_type"] == "audio"
+
+
+@pytest.mark.asyncio
+async def test_post_ingest_accepts_base64_audio_payload(client, app, valid_headers):
+    async def create_ingestion_job(payload, project_id):
+        assert payload.source_type == "audio"
+        assert payload.source_ref is None
+        assert payload.source_base64 == "SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU2LjI2"
+        assert payload.source_filename == "voice.mp3"
+        return {
+            "document_id": str(uuid4()),
+            "ingestion_job_id": str(uuid4()),
+            "status": "pending",
+            "mode": "async",
+            "source_type": "audio",
+        }
+
+    app.state.ingestion_service = SimpleNamespace(
+        create_ingestion_job=create_ingestion_job,
+    )
+
+    response = await client.post(
+        "/ingest",
+        headers=valid_headers,
+        json={
+            "source_type": "audio",
+            "source_base64": "SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU2LjI2",
+            "source_filename": "voice.mp3",
+            "mode": "async",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["source_type"] == "audio"
 
 
 @pytest.mark.asyncio

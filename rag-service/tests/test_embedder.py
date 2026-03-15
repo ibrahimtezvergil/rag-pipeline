@@ -256,3 +256,66 @@ async def test_embed_image_content_uses_inline_data_payload(monkeypatch):
     }
     assert result["status"] == "completed"
     assert result["dimension"] == 3
+
+
+@pytest.mark.asyncio
+async def test_embed_audio_content_uses_inline_data_payload(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"embedding": {"values": [0.7, 0.8, 0.9]}}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            captured["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(embedder_module.httpx, "AsyncClient", lambda timeout=30.0: FakeClient())
+    monkeypatch.setattr(
+        embedder_module,
+        "get_settings",
+        lambda: type(
+            "FakeSettings",
+            (),
+            {
+                "gemini_api_key": "secret-key",
+                "embed_model": "gemini-embedding-001",
+                "embed_dimension": 768,
+            },
+        )(),
+    )
+
+    result = await embedder_module.embed_audio_content(
+        audio_bytes=b"ID3audio",
+        title="voice.mp3 clip 1",
+        mime_type="audio/mpeg",
+    )
+
+    assert captured["json"] == {
+        "model": "models/gemini-embedding-001",
+        "content": {
+            "parts": [
+                {
+                    "inlineData": {
+                        "mimeType": "audio/mpeg",
+                        "data": "SUQzYXVkaW8=",
+                    }
+                }
+            ]
+        },
+        "taskType": "RETRIEVAL_DOCUMENT",
+        "title": "voice.mp3 clip 1",
+        "outputDimensionality": 768,
+    }
+    assert result["status"] == "completed"
+    assert result["dimension"] == 3

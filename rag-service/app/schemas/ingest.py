@@ -3,7 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 
 
-SourceType = Literal["pdf", "web", "db", "structured", "image"]
+SourceType = Literal["pdf", "web", "db", "structured", "image", "audio"]
 IngestMode = Literal["sync", "async"]
 
 
@@ -48,6 +48,8 @@ class IngestRequest(BaseModel):
             raise ValueError("structured source_type requires records")
         if self.source_type == "image" and not (has_url or has_base64):
             raise ValueError("image source_type requires source_ref or source_base64")
+        if self.source_type == "audio" and not (has_url or has_base64):
+            raise ValueError("audio source_type requires source_ref or source_base64")
         return self
 
 
