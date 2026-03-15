@@ -229,6 +229,72 @@ async def test_post_ingest_batch_rejects_sync_items(client, valid_headers):
 
 
 @pytest.mark.asyncio
+async def test_post_ingest_accepts_image_url_payload(client, app, valid_headers):
+    async def create_ingestion_job(payload, project_id):
+        assert payload.source_type == "image"
+        assert str(payload.source_ref) == "https://example.com/image.png"
+        assert payload.source_base64 is None
+        return {
+            "document_id": str(uuid4()),
+            "ingestion_job_id": str(uuid4()),
+            "status": "pending",
+            "mode": "async",
+            "source_type": "image",
+        }
+
+    app.state.ingestion_service = SimpleNamespace(
+        create_ingestion_job=create_ingestion_job,
+    )
+
+    response = await client.post(
+        "/ingest",
+        headers=valid_headers,
+        json={
+            "source_type": "image",
+            "source_ref": "https://example.com/image.png",
+            "mode": "async",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["source_type"] == "image"
+
+
+@pytest.mark.asyncio
+async def test_post_ingest_accepts_base64_image_payload(client, app, valid_headers):
+    async def create_ingestion_job(payload, project_id):
+        assert payload.source_type == "image"
+        assert payload.source_ref is None
+        assert payload.source_base64 == "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+        assert payload.source_filename == "avatar.png"
+        return {
+            "document_id": str(uuid4()),
+            "ingestion_job_id": str(uuid4()),
+            "status": "pending",
+            "mode": "async",
+            "source_type": "image",
+        }
+
+    app.state.ingestion_service = SimpleNamespace(
+        create_ingestion_job=create_ingestion_job,
+    )
+
+    response = await client.post(
+        "/ingest",
+        headers=valid_headers,
+        json={
+            "source_type": "image",
+            "source_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+            "source_filename": "avatar.png",
+            "mode": "async",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["source_type"] == "image"
+
+
+@pytest.mark.asyncio
 async def test_post_ingest_rejects_unsupported_source_type(client, valid_headers):
     response = await client.post(
         "/ingest",

@@ -410,6 +410,95 @@ async def test_sync_pdf_ingestion_preserves_loader_path_metadata(
 
 
 @pytest.mark.asyncio
+async def test_sync_image_ingestion_stores_direct_embed_metadata_and_vector_row(
+    integration_session,
+    seeded_project,
+    monkeypatch,
+):
+    async def fake_load(source_type, source_ref=None, **kwargs):
+        assert source_type == "image"
+        assert source_ref == "https://example.com/avatar.png"
+        return {
+            "content": "avatar.png",
+            "metadata": {
+                "title": "avatar.png",
+                "loader_strategy": "gemini_direct_image",
+                "mime_type": "image/png",
+                "binary_size_bytes": 15,
+                "modality": "image",
+                "url": "https://example.com/avatar.png",
+            },
+            "image_bytes": b"\x89PNG\r\n\x1a\nfakepng",
+            "chunk_count": 1,
+        }
+
+    async def fake_embed_image(image_bytes, title, mime_type):
+        assert image_bytes == b"\x89PNG\r\n\x1a\nfakepng"
+        assert title == "avatar.png"
+        assert mime_type == "image/png"
+        return {
+            "provider": "gemini",
+            "model": "gemini-test",
+            "task_type": "RETRIEVAL_DOCUMENT",
+            "embed_version": "gemini-test-3",
+            "status": "completed",
+            "values": [0.1, 0.2, 0.3],
+            "dimension": 3,
+            "vector_dimension": 3,
+        }
+
+    monkeypatch.setattr(ingestion_service_module, "load_source", fake_load, raising=False)
+    monkeypatch.setattr(
+        ingestion_service_module,
+        "embed_image_content",
+        fake_embed_image,
+        raising=False,
+    )
+
+    service = IngestionService(integration_session, vector_store=FakeVectorStore())
+    result = await service.create_ingestion_job(
+        IngestRequest(
+            source_type="image",
+            source_ref="https://example.com/avatar.png",
+            mode="sync",
+        ),
+        seeded_project["project_id"],
+    )
+
+    assert result["status"] == "completed"
+
+    document = await service.repository.get_document(UUID(result["document_id"]))
+    assert document is not None
+    assert document.status == "indexed"
+    assert document.title == "avatar.png"
+    assert document.chunk_count == 1
+    assert document.metadata_json["loader"] == {
+        "title": "avatar.png",
+        "loader_strategy": "gemini_direct_image",
+        "mime_type": "image/png",
+        "binary_size_bytes": 15,
+        "modality": "image",
+        "url": "https://example.com/avatar.png",
+    }
+    assert document.metadata_json["embedding"] == {
+        "provider": "gemini",
+        "model": "gemini-test",
+        "task_type": "RETRIEVAL_DOCUMENT",
+        "embed_version": "gemini-test-3",
+        "status": "completed",
+        "values": [0.1, 0.2, 0.3],
+        "dimension": 3,
+        "vector_dimension": 3,
+    }
+
+    chunks = await service.repository.get_document_chunks(document.id)
+    assert len(chunks) == 2
+    assert chunks[0].modality == "image"
+    assert chunks[1].modality == "image"
+    assert chunks[1].embed_model == "gemini-test"
+
+
+@pytest.mark.asyncio
 async def test_sync_db_ingestion_formats_sql_result_and_indexes_document(
     integration_session,
     seeded_project,

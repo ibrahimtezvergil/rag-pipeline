@@ -191,3 +191,68 @@ async def test_prepare_pdf_embedding_returns_prepared_when_content_missing():
 
     assert result["status"] == "prepared"
     assert result["source_ref"] == "https://example.com/files/report.pdf"
+
+
+@pytest.mark.asyncio
+async def test_embed_image_content_uses_inline_data_payload(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"embedding": {"values": [0.4, 0.5, 0.6]}}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(embedder_module.httpx, "AsyncClient", lambda timeout=30.0: FakeClient())
+    monkeypatch.setattr(
+        embedder_module,
+        "get_settings",
+        lambda: type(
+            "FakeSettings",
+            (),
+            {
+                "gemini_api_key": "secret-key",
+                "embed_model": "gemini-embedding-001",
+                "embed_dimension": 768,
+            },
+        )(),
+    )
+
+    result = await embedder_module.embed_image_content(
+        image_bytes=b"\x89PNG\r\n\x1a\nfakepng",
+        title="avatar.png",
+        mime_type="image/png",
+    )
+
+    assert captured["json"] == {
+        "model": "models/gemini-embedding-001",
+        "content": {
+            "parts": [
+                {
+                    "inlineData": {
+                        "mimeType": "image/png",
+                        "data": "iVBORw0KGgpmYWtlcG5n",
+                    }
+                }
+            ]
+        },
+        "taskType": "RETRIEVAL_DOCUMENT",
+        "title": "avatar.png",
+        "outputDimensionality": 768,
+    }
+    assert result["status"] == "completed"
+    assert result["dimension"] == 3

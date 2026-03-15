@@ -12,6 +12,7 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.db.session import engine
 from app.services.document_ai import extract_small_pdf_document
+from app.services.media import detect_image_mime_type, load_binary_source
 from app.services.summary_formatter import (
     format_structured_data,
     format_structured_data_semantically,
@@ -42,6 +43,12 @@ async def load_source(
         return await load_web_source(source_ref)
     if source_type == "pdf":
         return await load_pdf_source(
+            source_ref=source_ref,
+            source_bytes=source_bytes,
+            source_filename=source_filename,
+        )
+    if source_type == "image":
+        return await load_image_source(
             source_ref=source_ref,
             source_bytes=source_bytes,
             source_filename=source_filename,
@@ -198,6 +205,31 @@ async def load_pdf_source(
         "content": text,
         "metadata": metadata,
         "chunk_count": chunk_count,
+    }
+
+
+async def load_image_source(
+    source_ref: str | None = None,
+    *,
+    source_bytes: bytes | None = None,
+    source_filename: str | None = None,
+) -> dict[str, object]:
+    image_bytes = await load_binary_source(source_ref, source_bytes=source_bytes)
+    title = source_filename or Path(source_ref or "image").name
+    mime_type = detect_image_mime_type(image_bytes, title)
+    metadata = {
+        "title": title,
+        "loader_strategy": "gemini_direct_image",
+        "mime_type": mime_type,
+        "binary_size_bytes": len(image_bytes),
+        "modality": "image",
+        "url": source_ref or title,
+    }
+    return {
+        "content": title,
+        "metadata": metadata,
+        "image_bytes": image_bytes,
+        "chunk_count": 1,
     }
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 
 import httpx
 
@@ -50,11 +51,45 @@ async def embed_query_text(content: str) -> dict[str, object]:
     )
 
 
+async def embed_image_content(
+    *,
+    image_bytes: bytes,
+    title: str,
+    mime_type: str,
+) -> dict[str, object]:
+    encoded = base64.b64encode(image_bytes).decode("utf-8")
+    return await _embed_parts(
+        parts=[
+            {
+                "inlineData": {
+                    "mimeType": mime_type,
+                    "data": encoded,
+                }
+            }
+        ],
+        title=title,
+        task_type="RETRIEVAL_DOCUMENT",
+    )
+
+
 async def embed_text_content(
     content: str,
     title: str,
     *,
     task_type: str = "RETRIEVAL_DOCUMENT",
+) -> dict[str, object]:
+    return await _embed_parts(
+        parts=[{"text": content}],
+        title=title,
+        task_type=task_type,
+    )
+
+
+async def _embed_parts(
+    *,
+    parts: list[dict[str, object]],
+    title: str,
+    task_type: str,
 ) -> dict[str, object]:
     settings = get_settings()
     url = (
@@ -63,7 +98,7 @@ async def embed_text_content(
     )
     payload = {
         "model": f"models/{settings.embed_model}",
-        "content": {"parts": [{"text": content}]},
+        "content": {"parts": parts},
         "taskType": task_type,
         "title": title,
         "outputDimensionality": settings.embed_dimension,

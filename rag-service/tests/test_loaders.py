@@ -279,6 +279,67 @@ async def test_load_structured_source_formats_records_and_scope_metadata(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_load_image_source_fetches_url_and_detects_png_metadata(monkeypatch):
+    png_bytes = b"\x89PNG\r\n\x1a\nfakepng"
+
+    class FakeResponse:
+        content = png_bytes
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, source_ref):
+            assert source_ref == "https://example.com/avatar.png"
+            return FakeResponse()
+
+    monkeypatch.setattr(loaders_module.httpx, "AsyncClient", lambda **kwargs: FakeClient())
+
+    result = await loaders_module.load_image_source("https://example.com/avatar.png")
+
+    assert result["content"] == "avatar.png"
+    assert result["metadata"] == {
+        "title": "avatar.png",
+        "loader_strategy": "gemini_direct_image",
+        "mime_type": "image/png",
+        "binary_size_bytes": len(png_bytes),
+        "modality": "image",
+        "url": "https://example.com/avatar.png",
+    }
+    assert result["image_bytes"] == png_bytes
+    assert result["chunk_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_load_image_source_decodes_base64_jpeg(monkeypatch):
+    jpeg_bytes = b"\xff\xd8\xff\xe0fakejpeg"
+
+    result = await loaders_module.load_image_source(
+        None,
+        source_bytes=jpeg_bytes,
+        source_filename="photo.jpg",
+    )
+
+    assert result["content"] == "photo.jpg"
+    assert result["metadata"] == {
+        "title": "photo.jpg",
+        "loader_strategy": "gemini_direct_image",
+        "mime_type": "image/jpeg",
+        "binary_size_bytes": len(jpeg_bytes),
+        "modality": "image",
+        "url": "photo.jpg",
+    }
+    assert result["image_bytes"] == jpeg_bytes
+    assert result["chunk_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_load_pdf_source_uses_direct_strategy_for_small_pdf(monkeypatch):
     class FakeResponse:
         content = b"%PDF-fake"
