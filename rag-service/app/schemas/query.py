@@ -1,0 +1,45 @@
+from pydantic import BaseModel, Field
+
+
+class QueryRequest(BaseModel):
+    question: str = Field(min_length=1)
+    scope_type: str | None = None
+    scope_id: str | None = None
+    entity_id: str | None = None
+    snapshot_date: str | None = None
+    tags: list[str] | None = None
+
+
+class QuerySource(BaseModel):
+    document_id: str
+    title: str
+    source_ref: str
+    snippet: str
+    score: float | None = None
+
+
+class RetrievalContextBlock(BaseModel):
+    title: str
+    snippet: str
+    parent_context: str = ""
+    score: float | None = None
+
+
+class QueryResponse(BaseModel):
+    answer: str
+    retrieval_mode: str
+    retrieval_context: list[RetrievalContextBlock]
+    sources: list[QuerySource]
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1)
+    session_id: str | None = None
+
+
+class ChatResponse(BaseModel):
+    session_id: str
+    answer: str
+    retrieval_mode: str
+    retrieval_context: list[RetrievalContextBlock]
+    sources: list[QuerySource]

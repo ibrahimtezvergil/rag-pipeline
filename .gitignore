@@ -1,0 +1,8 @@
+.DS_Store
+.claude/
+.pytest_cache/
+__pycache__/
+.venv/
+*.pyc
+rag-service/.pytest_cache/
+rag-service/.venv313/

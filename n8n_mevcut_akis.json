@@ -1,0 +1,477 @@
+{
+  "name": "Fynovio New Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "be3c2995-6ba8-4f52-aa85-1d35252c4366",
+        "authentication": "basicAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -3664,
+        928
+      ],
+      "id": "a2dda4c2-3968-4e6c-a17f-ae20650851f4",
+      "name": "Webhook",
+      "webhookId": "be3c2995-6ba8-4f52-aa85-1d35252c4366",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "CwJbzzX6nMnvWAJi",
+          "name": "basicAuth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "enableStreaming": true
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -1392,
+        928
+      ],
+      "id": "38652c70-1393-4b2a-884d-8d8723281433",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "options": {
+          "temperature": 0.7
+        }
+      },
+      "id": "7f377ed3-53ad-460c-83c3-ac4f98b59d56",
+      "name": "Gemini Chat Model1",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -2768,
+        1152
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "Lr8j9U0ON9MTQR4t",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "d1c32e48-a948-4fcf-b4b7-5d624a21ee69",
+      "name": "Calculator1",
+      "type": "@n8n/n8n-nodes-langchain.toolCalculator",
+      "typeVersion": 1,
+      "position": [
+        -2576,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.type }}",
+                    "rightValue": "dashboard",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "12f714aa-107c-415c-be09-8fd0f5caa84b"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "dashboard"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "faf02e09-65f8-4fe4-9316-7754d3fc9891",
+                    "leftValue": "={{ $json.body.type }}",
+                    "rightValue": "dealer",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "dealer"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c2b59a96-7805-4ec9-8736-ac1fd4493408",
+                    "leftValue": "={{ $json.body.type }}",
+                    "rightValue": "competition_analysis",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "competition_analysis"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "ab6e8524-0850-4922-841b-663fbfaab70e",
+                    "leftValue": "={{ $json.body.type }}",
+                    "rightValue": "company",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "company"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -3456,
+        896
+      ],
+      "id": "082001be-31b7-4b13-979d-870c2220da2a",
+      "name": "Switch",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "url": "=https://bayiportal.fynovio.com/api/v1/n8n/competition-analysis/{{ $json.body.team_id }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "=start_date",
+              "value": "={{ $json.body.start_date }}"
+            },
+            {
+              "name": "end_date",
+              "value": "={{ $json.body.end_date }}"
+            },
+            {
+              "name": "assign_id",
+              "value": "={{ $json.body.staff_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7afef321-bb1d-49ab-bb37-a93f253be3f1",
+      "name": "GetCompetitionAnalysisReport",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -3168,
+        928
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node (final)\n\n// Extract input\nconst input = $input.first().json;\nconst body = input.body || input;\n\n// UUID (from previous node, optional)\nconst uuid = input.uuid || body.uuid || 'no_uuid';\n\n// team_id for internal scoping (DO NOT return)\nconst teamId = body.team_id;\n\n// User name from Webhook node (snake_case source)\nconst userName = $('Webhook').first().json?.body?.user_name ?? 'Bilinmeyen Kullanıcı';\n\n// Optional user_id (DO NOT return unless you want)\nconst userId = body.user_id ?? null;\n\n// session_id (optional) - not returned\nconst sessionId = body.session_id\n  ? body.session_id\n  : `report_team_${teamId}_user_${userId}_uuid_${uuid}`;\n\n// Validate required fields (teamId required for scoping)\nif (!teamId) {\n  throw new Error('team_id is required');\n}\n\n// Get report payload (array or object)\nconst reportRaw = Array.isArray(body) ? body : (body.report ?? body);\n\n// Recursively remove keys from an object/array (team_id should never leak)\nfunction stripKeysDeep(value, keysToRemove = new Set(['team_id', 'teamId'])) {\n  if (Array.isArray(value)) return value.map((v) => stripKeysDeep(v, keysToRemove));\n  if (value && typeof value === 'object') {\n    const out = {};\n    for (const [k, v] of Object.entries(value)) {\n      if (keysToRemove.has(k)) continue;\n      out[k] = stripKeysDeep(v, keysToRemove);\n    }\n    return out;\n  }\n  return value;\n}\n\nconst report = stripKeysDeep(reportRaw);\n\n// Role clarification to prevent \"userName = staff\" confusion\nconst roleRules = `ÖNEMLİ ROL AYRIMI KURALI:\n- Raporu talep eden kişi (${userName}) bir yönetici/yetkili kişidir.\n- Raporu talep eden kişi ASLA personel olarak değerlendirilmez.\n- Rapor içinde geçen isimler yalnızca operasyonel verilerde geçen personellerdir.\n- Raporu talep eden kişi hakkında performans, eksiklik, görüşme veya aksiyon önerisi üretme.\n- \"Personel ile görüşme\" gibi ifadeler yalnızca gerçek operasyon personelleri için kullanılabilir.\n- Eğer raporda geçen tek isim ${userName} ise: Bu ismi yönetici kabul et; kişi bazlı performans yorumu yapma, sürece odaklan.`;\n\n// Build chat input\nconst chatInput =\n`Kullanıcı (Yetkili): ${userName}\n\n${roleRules}\n\n## Görev\nAşağıdaki raporu analiz et ve yönetici seviyesinde danışmanlık çıktısı üret.\n\n## Beklenti\n- Bu bir personel karşılaştırma raporudur; personelleri güçlü/zayıf yönleriyle kıyasla.\n- Rapor dönemini baz alarak ay bazında özet çıkar.\n- “Beklemede / Teklif / Tamamlandı / İptal” akışında tıkanan noktayı bul.\n- Tahmini toplam tutar ile gerçekleşen tutar arasındaki farkı yorumla.\n- En az 5 kök neden hipotezi yaz ve her biri için çözüm öner.\n- Kısmi dönem olan ayları tam aylarla doğrudan kıyaslama; aynı ay içinde kıyas yap, gerekirse gün başına normalize et.\n- 0–7 gün, 7–30 gün, 30–90 gün aksiyon planı çıkar.\n- Çıktıyı System Message’daki şablona göre yaz.\n- Rapor verisini yanıtta tekrar etme; sadece özet, kıyas ve aksiyonları yaz.\n\nRapor (JSON):\n${JSON.stringify(report, null, 2)}`;\n\n// Return ONLY what the AI Agent needs\nreturn [\n  {\n    json: {\n      chatInput\n      // sessionId intentionally not returned\n      // teamId intentionally not returned\n      // userId intentionally not returned\n    }\n  }\n];"
+      },
+      "id": "cd579133-39f2-4dab-a05c-1dfa58b59d68",
+      "name": "CompetitionAnalysisParse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2976,
+        928
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "=Sen bir İş Operasyonları Analiz Asistanısın.\n\n## İşletme ve Kullanıcı Bilgisi\n- İşletme Adı: {{ $json.report.team_name || $json.team_name || 'Bilinmeyen İşletme' }}\n- Kullanıcı Adı: {{ $json.userName || 'Bilinmeyen Kullanıcı' }}\n\n## KAPSAM VE GİZLİLİK KURALLARI (ZORUNLU)\n- Yalnızca bu işletmeye ait verileri analiz et ve yorumla.\n- Başka işletmelere ait verileri asla gösterme, karşılaştırma yapma veya ima etme.\n- Karşılaştırmalar sadece bu işletmenin kendi geçmiş dönemleri, ekipleri veya personelleri arasında yapılabilir.\n- Yazılıma ve teknik altyapıya ait kavramları (id, uuid, key, record, database, json, tablo adı, alan adı vb.) kesinlikle kullanma.\n- Yanıtta team_id, document_type, staff_monthly_summary gibi sistem/teknik alanları yazma; sadece iş diliyle raporla.\n- Analizini tamamen iş ve operasyon diliyle yap.\n- Tüm verilerin bu işletmeye ait olduğu varsayımıyla hareket et.\n- Raporu talep eden kişi (Kullanıcı Adı) personel olarak değerlendirilmez; kişi bazlı performans yorumu yalnızca raporda geçen personeller için yapılır.\n\n## Rolün ve Sorumluluğun\n- İşletmenin operasyonel ve performans verilerini analiz etmek.\n- Satış, fırsat ve süreç metriklerini anlamlandırmak.\n- Yönetim seviyesinde net, uygulanabilir ve ölçülebilir öneriler sunmak.\n\n## Veri Eksikliği / Tutarsızlık Kuralı\n- Kritik veri eksikse: 1–3 kısa soru sor.\n- Soruyla ilerlemek mümkün değilse: “Varsayım:” diyerek minimum varsayımla analiz yap ve varsayımı açıkça belirt.\n- Veri tutarsızsa: “Veri Uyarısı:” başlığıyla sorunu iş diliyle belirt ve analize etkisini açıkla.\n\n## Analiz Kuralları\n- Bu rapor bir personel karşılaştırma raporudur; personeller arasında kıyaslama yapmak zorunludur.\n- Kıyaslamayı şu eksenlerde yap:\n  - Sonuç üretimi (tamamlanan adet/tutar, tamamlanma oranı)\n  - Kayıp/tıkanma (iptal oranı, beklemede adet/tutar)\n  - Verimlilik (iş başına süre)\n- Kısmi dönem olan ayları (ör. ayın ilk birkaç günü) tam aylarla doğrudan kıyaslama.\n  - Aynı ay içinde personel kıyası yap.\n  - Gerekirse adil kıyas için gün başına (günlük adet/günlük tutar) normalize ederek yorumla.\n- Yorumlarını mutlaka sayısal verilerle destekle.\n- Mümkünse dönemsel kıyas ver:\n  - Artış/azalış: hem adet hem yüzde (%)\n  - Gelir farkı: ₺ ve %\n- Potansiyel gelir – gerçekleşen gelir farkını ve bunun muhtemel nedenlerini açıkla.\n- Süreç tıkanmalarını, gecikmeleri ve kayıp noktalarını netleştir.\n- Önceliklendirme yap: En yüksek etki / en hızlı uygulanabilir aksiyonları öne al.\n\n## Yanıt Üslubu ve Yazım Kuralları\n- Türkçe, sade, kısa ve profesyonel yaz.\n- Yöneticiye rapor sunuyormuş gibi yaz.\n- Gereksiz teorik anlatımdan kaçın.\n\n## Markdown ve Metin Kuralları (ZORUNLU)\n- Yanıtını Markdown formatında yaz.\n- Kaçış karakterleri (\\n, \\\\n) kullanma; gerçek satır sonları kullan.\n- Başlıklar için ##, alt başlıklar için ### kullan.\n- Listeleme için - kullan.\n- Metni tek paragraf hâline getirme; okunabilir bölümler oluştur.\n\n## Formatlama Standartları\n- Para birimi: Türk Lirası (Örnek: 125.000,50 ₺)\n- Tarih: DD.MM.YYYY\n- Yüzde: %12,5\n\n## Analizde Odaklanılacak Ana Başlıklar\n- Süreçte tıkanan noktalar\n- Potansiyel gelir ile gerçekleşen gelir arasındaki fark\n- Operasyonel verimlilik ve zaman kullanımı\n- Kısa vadede iyileştirilebilecek alanlar\n- Yönetim için kritik riskler ve fırsatlar\n\n## ZORUNLU ÇIKTI YAPISI (SIRAYI BOZMA)\n1. Yönetici Özeti\n2. Dönemsel Performans Özeti\n3. Süreç / Huni Analizi\n4. Riskler ve Kayıp Alanları\n5. Öncelikli Aksiyonlar\n   - 0–7 Gün\n   - 7–30 Gün\n   - 30–90 Gün\n\n## Nihai Amaç\nYöneticinin tek okumada durumu net biçimde anlayıp doğru karar almasını sağlamak."
+        }
+      },
+      "id": "0c4a929c-82ac-4a33-a528-63f915d615c6",
+      "name": "iş operasyonları analiz asistanı",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        -2768,
+        928
+      ],
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "mode": "markdownToHtml",
+        "markdown": "={{ $json.output }}",
+        "destinationKey": "html",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.markdown",
+      "typeVersion": 1,
+      "position": [
+        -2192,
+        928
+      ],
+      "id": "9f9ac2d2-d3d9-4577-9136-652e17100a65",
+      "name": "Markdown"
+    },
+    {
+      "parameters": {
+        "jsCode": "// INPUT: $json.output (veya $json.text) içinde \"\\n\" stringleri olan metin\nconst raw = $json.output ?? $json.text ?? $json.chatInput ?? '';\n\nconst cleaned = String(raw)\n  // literal \"\\r\\n\" ve \"\\n\" stringlerini gerçek newline'a çevir\n  .replace(/\\\\r\\\\n/g, '\\n')\n  .replace(/\\\\n/g, '\\n')\n  // bazı durumlarda kaçışlı tırnaklar gelebilir\n  .replace(/\\\\\"/g, '\"')\n  .replace(/\\\\'/g, \"'\")\n  // gereksiz fazla boş satırları toparla\n  .replace(/\\n{3,}/g, '\\n\\n')\n  // satır sonlarındaki fazla boşlukları temizle\n  .replace(/[ \\t]+\\n/g, '\\n')\n  .trim();\n\nreturn [\n  {\n    json: {\n      output: cleaned\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2416,
+        928
+      ],
+      "id": "0c53a946-d416-4b35-9961-9c1d6f06080e",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Markdown node'un destination key'i \"html\" ise:\nconst rawHtml = $json.html ?? '';\n\n// HTML içindeki literal \\n gibi kaçışları temizle\nlet html = String(rawHtml)\n  .replace(/\\\\r\\\\n/g, '')\n  .replace(/\\\\n/g, '')\n  .replace(/\\\\t/g, '')\n  .trim();\n\n// Tag arası boşlukları hafif toparla (opsiyonel)\nhtml = html.replace(/>\\s+</g, '><');\n\nreturn [{ json: { html } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1776,
+        928
+      ],
+      "id": "8e376e4b-d46a-41a1-a07f-73911efab9cf",
+      "name": "Code in JavaScript1"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8n.fynovio.com",
+            "user-agent": "GuzzleHttp/7",
+            "content-length": "234",
+            "accept-encoding": "gzip",
+            "authorization": "Basic Znlub2JheWlwb3J0YWw6bmJQWnh5Z3JGcE1TdFR3NWh1eFZUMzhzVnN0VEMzZG8xM2U4aDF4SVZVZmp6YTNQRjY=",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "2a02:4780:41:24ea::1",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "DE",
+            "cf-ray": "9c0174eca2dedb0a-FRA",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "content-type": "application/json",
+            "x-forwarded-for": "172.71.148.180",
+            "x-forwarded-host": "n8n.fynovio.com",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "a8fbdbcafecd",
+            "x-real-ip": "172.71.148.180"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "type": "competition_analysis",
+            "staff_id": [
+              "7",
+              "2"
+            ],
+            "start_date": "2026-01-01",
+            "end_date": "2026-01-19",
+            "team_id": 2,
+            "team_name": "Enza Home Manavgat",
+            "user_mail": "test-fynovio@gmail.com",
+            "user_id": 1,
+            "user_name": "fynovio-bayiportal test"
+          },
+          "webhookUrl": "n8n.fynovio.com/webhook/be3c2995-6ba8-4f52-aa85-1d35252c4366",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "iş operasyonları analiz asistanı",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculator1": {
+      "ai_tool": [
+        [
+          {
+            "node": "iş operasyonları analiz asistanı",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [],
+        [],
+        [
+          {
+            "node": "GetCompetitionAnalysisReport",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "GetCompetitionAnalysisReport": {
+      "main": [
+        [
+          {
+            "node": "CompetitionAnalysisParse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CompetitionAnalysisParse": {
+      "main": [
+        [
+          {
+            "node": "iş operasyonları analiz asistanı",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "iş operasyonları analiz asistanı": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Markdown": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        []
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Markdown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "2949dcd6-041e-4c9c-8cd9-52ca0ab7feb6",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5b024f88ff850a6885865cffc0216c42ac083e9437d843e31dc400552e540ed1"
+  },
+  "id": "wicDtUG64rbE0lwZ",
+  "tags": []
+}
