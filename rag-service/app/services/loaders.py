@@ -12,7 +12,13 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.db.session import engine
 from app.services.document_ai import extract_small_pdf_document
-from app.services.media import detect_image_mime_type, load_binary_source
+from app.services.media import (
+    build_clip_ranges,
+    detect_audio_mime_type,
+    detect_image_mime_type,
+    load_binary_source,
+    probe_audio_duration_seconds,
+)
 from app.services.summary_formatter import (
     format_structured_data,
     format_structured_data_semantically,
@@ -49,6 +55,12 @@ async def load_source(
         )
     if source_type == "image":
         return await load_image_source(
+            source_ref=source_ref,
+            source_bytes=source_bytes,
+            source_filename=source_filename,
+        )
+    if source_type == "audio":
+        return await load_audio_source(
             source_ref=source_ref,
             source_bytes=source_bytes,
             source_filename=source_filename,
@@ -230,6 +242,36 @@ async def load_image_source(
         "metadata": metadata,
         "image_bytes": image_bytes,
         "chunk_count": 1,
+    }
+
+
+async def load_audio_source(
+    source_ref: str | None = None,
+    *,
+    source_bytes: bytes | None = None,
+    source_filename: str | None = None,
+) -> dict[str, object]:
+    audio_bytes = await load_binary_source(source_ref, source_bytes=source_bytes)
+    title = source_filename or Path(source_ref or "audio").name
+    mime_type = detect_audio_mime_type(audio_bytes, title)
+    duration_seconds = probe_audio_duration_seconds(audio_bytes, title)
+    clips = build_clip_ranges(duration_seconds)
+    metadata = {
+        "title": title,
+        "loader_strategy": "gemini_audio_clipped",
+        "mime_type": mime_type,
+        "binary_size_bytes": len(audio_bytes),
+        "modality": "audio",
+        "url": source_ref or title,
+        "duration_seconds": duration_seconds,
+        "clip_count": len(clips),
+        "clips": clips,
+    }
+    return {
+        "content": title,
+        "metadata": metadata,
+        "audio_bytes": audio_bytes,
+        "chunk_count": len(clips),
     }
 
 
