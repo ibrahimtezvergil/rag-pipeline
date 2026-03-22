@@ -12,7 +12,12 @@ from app.repositories.ingestion import IngestionRepository
 from app.schemas.ingest import IngestRequest
 from app.services.chunking import build_chunks
 from app.services.dispatch import IngestionDispatcher, NullIngestionDispatcher
-from app.services.embedder import embed_image_content, embed_text_content, resolve_pdf_embedding
+from app.services.embedder import (
+    embed_audio_content,
+    embed_image_content,
+    embed_text_content,
+    resolve_pdf_embedding,
+)
 from app.services.loaders import decode_base64_source, load_source
 from app.services.sparse_encoder import encode_sparse_text
 from app.services.vector_store import QdrantVectorStore
@@ -421,6 +426,63 @@ class IngestionService:
                 "vector": embedding["values"],
             }
             return [parent_row, vector_row], [1]
+        if document.source_type == "audio":
+            chunk_rows: list[dict[str, object]] = []
+            vector_chunk_indices: list[int] = []
+            audio_bytes = loaded["audio_bytes"]
+            mime_type = str(metadata["mime_type"])
+            for clip in list(metadata.get("clips") or []):
+                clip_label = f"{title} clip {clip['clip_index'] + 1}"
+                clip_summary = (
+                    f"{title} clip {clip['clip_index'] + 1} "
+                    f"({clip['start_second']}-{clip['end_second']}s)"
+                )
+                parent_index = len(chunk_rows)
+                chunk_rows.append(
+                    {
+                        "document_id": document.id,
+                        "chunk_index": len(chunk_rows),
+                        "parent_chunk_id": None,
+                        "modality": "audio",
+                        "token_count": 0,
+                        "page_number": None,
+                        "bbox": None,
+                        "section_title": clip_label,
+                        "acl": [],
+                        "embed_model": None,
+                        "embed_version": None,
+                        "dimension": 0,
+                        "content_hash": self._content_hash(clip_summary),
+                        "content": clip_summary,
+                        "vector": [],
+                    }
+                )
+                embedding = await embed_audio_content(
+                    audio_bytes=audio_bytes,
+                    title=clip_label,
+                    mime_type=mime_type,
+                )
+                vector_chunk_indices.append(len(chunk_rows))
+                chunk_rows.append(
+                    {
+                        "document_id": document.id,
+                        "chunk_index": len(chunk_rows),
+                        "parent_chunk_id": "__PARENT_INDEX__:" + str(parent_index),
+                        "modality": "audio",
+                        "token_count": 0,
+                        "page_number": None,
+                        "bbox": None,
+                        "section_title": clip_label,
+                        "acl": [],
+                        "embed_model": str(embedding.get("model") or ""),
+                        "embed_version": str(embedding.get("embed_version") or "v1"),
+                        "dimension": int(embedding.get("dimension") or len(embedding.get("values", []))),
+                        "content_hash": self._content_hash(clip_summary),
+                        "content": clip_summary,
+                        "vector": embedding["values"],
+                    }
+                )
+            return chunk_rows, vector_chunk_indices
 
         raw_chunks = build_chunks(document.source_type, content, metadata)
         chunk_rows: list[dict[str, object]] = []

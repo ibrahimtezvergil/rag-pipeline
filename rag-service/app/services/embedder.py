@@ -72,6 +72,27 @@ async def embed_image_content(
     )
 
 
+async def embed_audio_content(
+    *,
+    audio_bytes: bytes,
+    title: str,
+    mime_type: str,
+) -> dict[str, object]:
+    encoded = base64.b64encode(audio_bytes).decode("utf-8")
+    return await _embed_parts(
+        parts=[
+            {
+                "inlineData": {
+                    "mimeType": mime_type,
+                    "data": encoded,
+                }
+            }
+        ],
+        title=title,
+        task_type="RETRIEVAL_DOCUMENT",
+    )
+
+
 async def embed_text_content(
     content: str,
     title: str,

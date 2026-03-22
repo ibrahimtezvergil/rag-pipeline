@@ -308,6 +308,70 @@ async def test_load_image_source_decodes_base64_jpeg(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_load_audio_source_short_file_returns_single_clip(monkeypatch):
+    mp3_bytes = b"ID3short-audio"
+
+    class FakeResponse:
+        content = mp3_bytes
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, source_ref):
+            assert source_ref == "https://example.com/audio.mp3"
+            return FakeResponse()
+
+    monkeypatch.setattr(loaders_module.httpx, "AsyncClient", lambda **kwargs: FakeClient())
+    monkeypatch.setattr(loaders_module, "probe_audio_duration_seconds", lambda *args, **kwargs: 95)
+
+    result = await loaders_module.load_audio_source("https://example.com/audio.mp3")
+
+    assert result["content"] == "audio.mp3"
+    assert result["metadata"] == {
+        "title": "audio.mp3",
+        "loader_strategy": "gemini_audio_clipped",
+        "mime_type": "audio/mpeg",
+        "binary_size_bytes": len(mp3_bytes),
+        "modality": "audio",
+        "url": "https://example.com/audio.mp3",
+        "duration_seconds": 95,
+        "clip_count": 1,
+        "clips": [{"clip_index": 0, "start_second": 0, "end_second": 95}],
+    }
+    assert result["audio_bytes"] == mp3_bytes
+    assert result["chunk_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_load_audio_source_long_file_creates_120_second_windows(monkeypatch):
+    mp3_bytes = b"ID3long-audio"
+
+    monkeypatch.setattr(loaders_module, "probe_audio_duration_seconds", lambda *args, **kwargs: 255)
+
+    result = await loaders_module.load_audio_source(
+        None,
+        source_bytes=mp3_bytes,
+        source_filename="voice.mp3",
+    )
+
+    assert result["metadata"]["mime_type"] == "audio/mpeg"
+    assert result["metadata"]["duration_seconds"] == 255
+    assert result["metadata"]["clip_count"] == 3
+    assert result["metadata"]["clips"] == [
+        {"clip_index": 0, "start_second": 0, "end_second": 120},
+        {"clip_index": 1, "start_second": 120, "end_second": 240},
+        {"clip_index": 2, "start_second": 240, "end_second": 255},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_load_pdf_source_uses_direct_strategy_for_small_pdf(monkeypatch):
     class FakeResponse:
         content = b"%PDF-fake"
