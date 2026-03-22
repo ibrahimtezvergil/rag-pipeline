@@ -107,6 +107,7 @@ async def test_run_ingest_job_processes_async_job(
     assert vector_store.upsert_calls[0]["chunks"][0]["tenant_id"] == str(seeded_project["tenant_id"])
     assert vector_store.upsert_calls[0]["chunks"][0]["scope_type"] == "project"
     assert vector_store.upsert_calls[0]["chunks"][0]["scope_id"] == str(seeded_project["project_id"])
+    assert vector_store.upsert_calls[0]["chunks"][0]["sparse_vector"]["indices"]
 
 
 @pytest.mark.asyncio

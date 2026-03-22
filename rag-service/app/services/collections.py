@@ -43,7 +43,10 @@ class CollectionsService:
                 "vectors": {
                     "size": self.dimension,
                     "distance": "Cosine",
-                }
+                },
+                "sparse_vectors": {
+                    "sparse": {},
+                },
             },
         )
         response.raise_for_status()

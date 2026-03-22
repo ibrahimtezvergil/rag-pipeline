@@ -23,6 +23,7 @@ class IngestRequest(BaseModel):
     record_ids: list[str] | None = None
     snapshot_date: str | None = None
     tags: list[str] | None = None
+    acl: list[str] | None = None
     mode: IngestMode = "async"
 
     @model_validator(mode="after")

@@ -14,6 +14,7 @@ from app.services.chunking import build_chunks
 from app.services.dispatch import IngestionDispatcher, NullIngestionDispatcher
 from app.services.embedder import embed_image_content, embed_text_content, resolve_pdf_embedding
 from app.services.loaders import decode_base64_source, load_source
+from app.services.sparse_encoder import encode_sparse_text
 from app.services.vector_store import QdrantVectorStore
 
 
@@ -62,6 +63,7 @@ class IngestionService:
                 **({"record_ids": payload.record_ids} if payload.record_ids else {}),
                 **({"snapshot_date": payload.snapshot_date} if payload.snapshot_date else {}),
                 **({"tags": payload.tags} if payload.tags else {}),
+                **({"acl": payload.acl} if payload.acl else {}),
             },
         )
         job = await self.repository.create_job(
@@ -334,6 +336,7 @@ class IngestionService:
                     "acl": chunk.acl,
                     "content": row["content"],
                     "vector": row["vector"],
+                    "sparse_vector": row.get("sparse_vector"),
                 }
                 for chunk, row in zip(vector_chunks, vector_rows, strict=False)
             ]
@@ -392,7 +395,7 @@ class IngestionService:
                 "page_number": None,
                 "bbox": None,
                 "section_title": title,
-                "acl": [],
+                "acl": list(document.metadata_json.get("acl", [])),
                 "embed_model": None,
                 "embed_version": None,
                 "dimension": 0,
@@ -409,7 +412,7 @@ class IngestionService:
                 "page_number": None,
                 "bbox": None,
                 "section_title": title,
-                "acl": [],
+                "acl": list(document.metadata_json.get("acl", [])),
                 "embed_model": str(embedding.get("model") or ""),
                 "embed_version": str(embedding.get("embed_version") or "v1"),
                 "dimension": int(embedding.get("dimension") or len(embedding.get("values", []))),
@@ -433,7 +436,7 @@ class IngestionService:
                 "page_number": raw_chunk.get("page_number"),
                 "bbox": raw_chunk.get("bbox"),
                 "section_title": title,
-                "acl": [],
+                "acl": list(document.metadata_json.get("acl", [])),
                 "embed_model": None,
                 "embed_version": None,
                 "dimension": 0,
@@ -454,13 +457,14 @@ class IngestionService:
                     "page_number": raw_chunk.get("page_number"),
                     "bbox": raw_chunk.get("bbox"),
                     "section_title": title,
-                    "acl": [],
+                    "acl": list(document.metadata_json.get("acl", [])),
                     "embed_model": str(embedding.get("model") or ""),
                     "embed_version": "v1",
                     "dimension": int(embedding.get("dimension") or len(embedding.get("values", []))),
                     "content_hash": self._content_hash(raw_chunk["content"]),
                     "content": raw_chunk["content"],
                     "vector": embedding["values"],
+                    "sparse_vector": encode_sparse_text(raw_chunk["content"]),
                 }
             )
         return chunk_rows, vector_chunk_indices

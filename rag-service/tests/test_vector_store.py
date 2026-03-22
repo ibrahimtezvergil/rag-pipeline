@@ -45,7 +45,10 @@ async def test_qdrant_vector_store_creates_fixed_dimension_collection(monkeypatc
 
     assert captured == {
         "path": "/collections/rag_chunks",
-        "json": {"vectors": {"size": 768, "distance": "Cosine"}},
+        "json": {
+            "vectors": {"dense": {"size": 768, "distance": "Cosine"}},
+            "sparse_vectors": {"sparse": {}},
+        },
     }
 
 
@@ -95,12 +98,14 @@ async def test_qdrant_vector_store_upserts_payload_and_deletes_points(monkeypatc
                 "acl": ["public"],
                 "content": "hello",
                 "vector": [0.1, 0.2, 0.3],
+                "sparse_vector": {"indices": [7, 11], "values": [2.0, 1.0]},
             }
         ]
     )
     await store.delete_points(point_ids)
 
     payload = captured["put_json"]["points"][0]["payload"]
+    vector = captured["put_json"]["points"][0]["vector"]
     assert captured["put_path"] == "/collections/rag_chunks/points"
     assert payload["tenant_id"] == "tenant-1"
     assert payload["scope_type"] == "project"
@@ -108,6 +113,8 @@ async def test_qdrant_vector_store_upserts_payload_and_deletes_points(monkeypatc
     assert payload["source_type"] == "web"
     assert payload["modality"] == "text"
     assert payload["acl"] == ["public"]
+    assert vector["dense"] == [0.1, 0.2, 0.3]
+    assert vector["sparse"] == {"indices": [7, 11], "values": [2.0, 1.0]}
     assert captured["post_path"] == "/collections/rag_chunks/points/delete"
     assert captured["post_json"] == {"points": point_ids}
 
@@ -234,6 +241,7 @@ async def test_qdrant_vector_store_queries_ranked_chunks_with_vector_and_filter(
         entity_id="cust_42",
         snapshot_date="2026-03-15",
         tags=["crm"],
+        acl=["tenant:42", "role:manager"],
         limit=5,
     )
 
@@ -246,6 +254,7 @@ async def test_qdrant_vector_store_queries_ranked_chunks_with_vector_and_filter(
         "limit": 5,
         "with_payload": True,
         "with_vector": False,
+        "using": "dense",
         "query": [0.1, 0.2, 0.3],
         "filter": {
             "must": [
@@ -254,6 +263,81 @@ async def test_qdrant_vector_store_queries_ranked_chunks_with_vector_and_filter(
                 {"key": "scope_id", "match": {"value": "cust_42"}},
                 {"key": "entity_id", "match": {"value": "cust_42"}},
                 {"key": "snapshot_date", "match": {"value": "2026-03-15"}},
+                {"key": "tags", "match": {"value": "crm"}},
+            ],
+            "should": [
+                {"key": "acl", "match": {"value": "tenant:42"}},
+                {"key": "acl", "match": {"value": "role:manager"}},
+            ],
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_qdrant_vector_store_queries_sparse_ranked_chunks(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, path, json=None):
+            captured["path"] = path
+            captured["json"] = json
+            return DummyResponse(
+                {
+                    "result": {
+                        "points": [
+                            {
+                                "score": 3.7,
+                                "payload": {
+                                    "document_id": "doc-7",
+                                    "chunk_id": "chunk-7",
+                                },
+                            }
+                        ]
+                    }
+                }
+            )
+
+    monkeypatch.setattr("app.services.vector_store.httpx.AsyncClient", lambda **kwargs: FakeClient())
+    monkeypatch.setattr(
+        "app.services.vector_store.get_settings",
+        lambda: type(
+            "FakeSettings",
+            (),
+            {"qdrant_url": "http://qdrant:6333", "qdrant_collection": "rag_chunks", "embed_dimension": 768},
+        )(),
+    )
+
+    store = QdrantVectorStore()
+    results = await store.search_sparse_chunks(
+        sparse_query={"indices": [1, 4, 9], "values": [1.0, 0.5, 2.0]},
+        tenant_id="tenant-1",
+        scope_type="customer",
+        scope_id="cust_42",
+        entity_id=None,
+        snapshot_date=None,
+        tags=["crm"],
+        limit=4,
+    )
+
+    assert results == [{"document_id": "doc-7", "chunk_id": "chunk-7", "score": 3.7}]
+    assert captured["path"] == "/collections/rag_chunks/points/query"
+    assert captured["json"] == {
+        "limit": 4,
+        "with_payload": True,
+        "with_vector": False,
+        "using": "sparse",
+        "query": {"indices": [1, 4, 9], "values": [1.0, 0.5, 2.0]},
+        "filter": {
+            "must": [
+                {"key": "tenant_id", "match": {"value": "tenant-1"}},
+                {"key": "scope_type", "match": {"value": "customer"}},
+                {"key": "scope_id", "match": {"value": "cust_42"}},
                 {"key": "tags", "match": {"value": "crm"}},
             ]
         },

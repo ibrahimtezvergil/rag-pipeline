@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable
+import asyncio
 
 import httpx
 from redis.asyncio import from_url as redis_from_url
@@ -53,9 +53,15 @@ async def check_embedder() -> ServiceStatus:
 
 
 async def collect_health_status() -> dict[str, ServiceStatus]:
+    postgres, redis, qdrant, embedder = await asyncio.gather(
+        check_postgres(),
+        check_redis(),
+        check_qdrant(),
+        check_embedder(),
+    )
     return {
-        "postgres": await check_postgres(),
-        "redis": await check_redis(),
-        "qdrant": await check_qdrant(),
-        "embedder": await check_embedder(),
+        "postgres": postgres,
+        "redis": redis,
+        "qdrant": qdrant,
+        "embedder": embedder,
     }

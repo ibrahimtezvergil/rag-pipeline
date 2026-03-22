@@ -17,9 +17,14 @@ class QdrantVectorStore:
     async def ensure_collection(self) -> None:
         payload = {
             "vectors": {
-                "size": self.dimension,
-                "distance": "Cosine",
-            }
+                "dense": {
+                    "size": self.dimension,
+                    "distance": "Cosine",
+                }
+            },
+            "sparse_vectors": {
+                "sparse": {}
+            },
         }
         async with httpx.AsyncClient(base_url=self.base_url, timeout=5.0) as client:
             response = await client.put(f"/collections/{self.collection_name}", json=payload)
@@ -34,7 +39,14 @@ class QdrantVectorStore:
             points.append(
                 {
                     "id": point_id,
-                    "vector": chunk["vector"],
+                    "vector": {
+                        "dense": chunk["vector"],
+                        **(
+                            {"sparse": chunk["sparse_vector"]}
+                            if chunk.get("sparse_vector") is not None
+                            else {}
+                        ),
+                    },
                     "payload": {
                         "document_id": chunk["document_id"],
                         "chunk_id": chunk["chunk_id"],
@@ -73,6 +85,7 @@ class QdrantVectorStore:
         entity_id: str | None = None,
         snapshot_date: str | None = None,
         tags: list[str] | None = None,
+        acl: list[str] | None = None,
     ) -> list[str]:
         must_filters = [{"key": "tenant_id", "match": {"value": tenant_id}}]
         if scope_type is not None:
@@ -93,7 +106,13 @@ class QdrantVectorStore:
                     "limit": 256,
                     "with_payload": True,
                     "with_vector": False,
-                    "filter": {"must": must_filters},
+                    "filter": {
+                        "must": must_filters,
+                        **(
+                            {"should": [{"key": "acl", "match": {"value": value}} for value in acl]}
+                            if acl else {}
+                        ),
+                    },
                 },
             )
             response.raise_for_status()
@@ -116,6 +135,7 @@ class QdrantVectorStore:
         entity_id: str | None = None,
         snapshot_date: str | None = None,
         tags: list[str] | None = None,
+        acl: list[str] | None = None,
         limit: int = 6,
     ) -> list[dict[str, object]]:
         must_filters = [{"key": "tenant_id", "match": {"value": tenant_id}}]
@@ -137,8 +157,71 @@ class QdrantVectorStore:
                     "limit": limit,
                     "with_payload": True,
                     "with_vector": False,
+                    "using": "dense",
                     "query": query_vector,
-                    "filter": {"must": must_filters},
+                    "filter": {
+                        "must": must_filters,
+                        **(
+                            {"should": [{"key": "acl", "match": {"value": value}} for value in acl]}
+                            if acl else {}
+                        ),
+                    },
+                },
+            )
+            response.raise_for_status()
+
+        points = response.json().get("result", {}).get("points", [])
+        return [
+            {
+                "document_id": point.get("payload", {}).get("document_id"),
+                "chunk_id": point.get("payload", {}).get("chunk_id"),
+                "score": point.get("score", 0.0),
+            }
+            for point in points
+            if point.get("payload", {}).get("document_id")
+        ]
+
+    async def search_sparse_chunks(
+        self,
+        *,
+        sparse_query: dict[str, list[int] | list[float]],
+        tenant_id: str,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+        entity_id: str | None = None,
+        snapshot_date: str | None = None,
+        tags: list[str] | None = None,
+        acl: list[str] | None = None,
+        limit: int = 6,
+    ) -> list[dict[str, object]]:
+        must_filters = [{"key": "tenant_id", "match": {"value": tenant_id}}]
+        if scope_type is not None:
+            must_filters.append({"key": "scope_type", "match": {"value": scope_type}})
+        if scope_id is not None:
+            must_filters.append({"key": "scope_id", "match": {"value": scope_id}})
+        if entity_id is not None:
+            must_filters.append({"key": "entity_id", "match": {"value": entity_id}})
+        if snapshot_date is not None:
+            must_filters.append({"key": "snapshot_date", "match": {"value": snapshot_date}})
+        for tag in tags or []:
+            must_filters.append({"key": "tags", "match": {"value": tag}})
+
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=10.0) as client:
+            response = await client.post(
+                f"/collections/{self.collection_name}/points/query",
+                json={
+                    "limit": limit,
+                    "with_payload": True,
+                    "with_vector": False,
+                    "using": "sparse",
+                    "query": sparse_query,
+                    "filter": {
+                        "must": must_filters,
+                        **(
+                            {"should": [{"key": "acl", "match": {"value": value}} for value in acl]}
+                            if acl else {}
+                        ),
+                    },
                 },
             )
             response.raise_for_status()

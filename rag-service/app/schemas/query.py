@@ -1,8 +1,16 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
 class QueryRequest(BaseModel):
     question: str = Field(min_length=1)
+    retrieval_mode: Literal["dense", "sparse", "hybrid"] = "hybrid"
+    collections: list[str] | None = None
+    merge_strategy: Literal["rrf"] = "rrf"
+    exclude_sources: list[str] | None = None
+    exclude_documents: list[str] | None = None
+    acl: list[str] | None = None
     scope_type: str | None = None
     scope_id: str | None = None
     entity_id: str | None = None

@@ -7,10 +7,7 @@ from pathlib import Path
 
 import httpx
 import fitz
-from sqlalchemy import text
-
 from app.config import get_settings
-from app.db.session import engine
 from app.services.document_ai import extract_small_pdf_document
 from app.services.media import detect_image_mime_type, load_binary_source
 from app.services.summary_formatter import (
@@ -234,27 +231,12 @@ async def load_image_source(
 
 
 async def load_db_source(source_sql: str) -> dict[str, object]:
-    normalized_sql = source_sql.strip()
-    if not normalized_sql:
-        raise ValueError("source_sql cannot be empty")
-    if not re.match(r"^(select|with)\b", normalized_sql, flags=re.IGNORECASE):
-        raise ValueError("DB loader only supports read-only SELECT/WITH queries")
-
-    async with engine.connect() as connection:
-        result = await connection.execute(text(normalized_sql))
-        rows = [dict(row) for row in result.mappings().all()]
-
-    title = "SQL Query Result"
-    content = format_structured_data(rows, title=title)
-    return {
-        "content": content,
-        "metadata": {
-            "title": title,
-            "row_count": len(rows),
-            "query": normalized_sql,
-        },
-        "chunk_count": max(1, len(rows)),
-    }
+    # Disabled: this function previously used the internal RAG engine without tenant
+    # isolation, allowing cross-tenant data access. Re-implement with an explicit
+    # external DB connection string and per-project scoping before re-enabling.
+    raise NotImplementedError(
+        "DB loader is disabled. Use an external connection string with explicit tenant scoping."
+    )
 
 
 async def load_structured_source(

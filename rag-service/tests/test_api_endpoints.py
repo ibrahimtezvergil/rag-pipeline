@@ -14,6 +14,12 @@ async def test_post_query_returns_answer(client, app, valid_headers):
         entity_id=None,
         snapshot_date=None,
         tags=None,
+        acl=None,
+        retrieval_mode="dense",
+        collections=None,
+        merge_strategy="rrf",
+        exclude_sources=None,
+        exclude_documents=None,
     ):
         assert question == "Rapor ne anlatıyor?"
         assert str(project_id) == valid_headers["X-Project-ID"]
@@ -22,6 +28,12 @@ async def test_post_query_returns_answer(client, app, valid_headers):
         assert entity_id is None
         assert snapshot_date is None
         assert tags is None
+        assert acl is None
+        assert retrieval_mode == "hybrid"
+        assert collections is None
+        assert merge_strategy == "rrf"
+        assert exclude_sources is None
+        assert exclude_documents is None
         return {
             "answer": "Rapor gelir artisini anlatiyor.",
             "retrieval_mode": "semantic_qdrant",
@@ -42,6 +54,10 @@ async def test_post_query_returns_answer(client, app, valid_headers):
                     "score": 0.91,
                 }
             ],
+            "query_embedding": {
+                "values": [0.1, 0.2],
+                "dimension": 2,
+            },
         }
 
     app.state.query_service = SimpleNamespace(answer_question=answer_question)
@@ -63,6 +79,7 @@ async def test_post_query_returns_answer(client, app, valid_headers):
             "score": 0.91,
         }
     ]
+    assert "query_embedding" not in response.json()
     assert len(response.json()["sources"]) == 1
 
 
@@ -76,6 +93,12 @@ async def test_post_query_passes_scope_filters(client, app, valid_headers):
         entity_id=None,
         snapshot_date=None,
         tags=None,
+        acl=None,
+        retrieval_mode="dense",
+        collections=None,
+        merge_strategy="rrf",
+        exclude_sources=None,
+        exclude_documents=None,
     ):
         assert question == "Musteri ozeti?"
         assert str(project_id) == valid_headers["X-Project-ID"]
@@ -84,9 +107,15 @@ async def test_post_query_passes_scope_filters(client, app, valid_headers):
         assert entity_id is None
         assert snapshot_date is None
         assert tags == ["crm"]
+        assert acl is None
+        assert retrieval_mode == "hybrid"
+        assert collections is None
+        assert merge_strategy == "rrf"
+        assert exclude_sources is None
+        assert exclude_documents is None
         return {
             "answer": "Filtrelenmis musteri ozeti.",
-            "retrieval_mode": "metadata_fallback",
+            "retrieval_mode": "hybrid_rrf",
             "retrieval_context": [],
             "sources": [],
         }
@@ -106,8 +135,179 @@ async def test_post_query_passes_scope_filters(client, app, valid_headers):
 
     assert response.status_code == 200
     assert response.json()["answer"] == "Filtrelenmis musteri ozeti."
-    assert response.json()["retrieval_mode"] == "metadata_fallback"
+    assert response.json()["retrieval_mode"] == "hybrid_rrf"
     assert response.json()["retrieval_context"] == []
+
+
+@pytest.mark.asyncio
+async def test_post_query_passes_sparse_retrieval_mode(client, app, valid_headers):
+    async def answer_question(
+        question,
+        project_id,
+        scope_type=None,
+        scope_id=None,
+        entity_id=None,
+        snapshot_date=None,
+        tags=None,
+        acl=None,
+        retrieval_mode="dense",
+        collections=None,
+        merge_strategy="rrf",
+        exclude_sources=None,
+        exclude_documents=None,
+    ):
+        assert question == "Anahtar kelime ara"
+        assert acl is None
+        assert retrieval_mode == "sparse"
+        assert collections is None
+        assert merge_strategy == "rrf"
+        assert exclude_sources is None
+        assert exclude_documents is None
+        return {
+            "answer": "Sparse sonuc hazir.",
+            "retrieval_mode": "sparse_qdrant",
+            "retrieval_context": [],
+            "sources": [],
+        }
+
+    app.state.query_service = SimpleNamespace(answer_question=answer_question)
+
+    response = await client.post(
+        "/query",
+        headers=valid_headers,
+        json={"question": "Anahtar kelime ara", "retrieval_mode": "sparse"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "Sparse sonuc hazir."
+    assert response.json()["retrieval_mode"] == "sparse_qdrant"
+
+
+@pytest.mark.asyncio
+async def test_post_query_passes_multi_collection_request(client, app, valid_headers):
+    async def answer_question(
+        question,
+        project_id,
+        scope_type=None,
+        scope_id=None,
+        entity_id=None,
+        snapshot_date=None,
+        tags=None,
+        acl=None,
+        retrieval_mode="dense",
+        collections=None,
+        merge_strategy="rrf",
+        exclude_sources=None,
+        exclude_documents=None,
+    ):
+        assert retrieval_mode == "hybrid"
+        assert acl is None
+        assert collections == ["crm_docs", "support_docs"]
+        assert merge_strategy == "rrf"
+        assert exclude_sources is None
+        assert exclude_documents is None
+        return {
+            "answer": "Coklu collection sonucu.",
+            "retrieval_mode": "hybrid_rrf",
+            "retrieval_context": [],
+            "sources": [],
+        }
+
+    app.state.query_service = SimpleNamespace(answer_question=answer_question)
+
+    response = await client.post(
+        "/query",
+        headers=valid_headers,
+        json={
+            "question": "Musteri gecmisi",
+            "collections": ["crm_docs", "support_docs"],
+            "merge_strategy": "rrf",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["retrieval_mode"] == "hybrid_rrf"
+
+
+@pytest.mark.asyncio
+async def test_post_query_passes_negative_filters(client, app, valid_headers):
+    async def answer_question(
+        question,
+        project_id,
+        scope_type=None,
+        scope_id=None,
+        entity_id=None,
+        snapshot_date=None,
+        tags=None,
+        acl=None,
+        retrieval_mode="dense",
+        collections=None,
+        merge_strategy="rrf",
+        exclude_sources=None,
+        exclude_documents=None,
+    ):
+        assert acl is None
+        assert exclude_sources == ["inline://crm", "inline://support"]
+        assert exclude_documents == ["doc-1", "doc-2"]
+        return {
+            "answer": "Filtered",
+            "retrieval_mode": "hybrid_rrf",
+            "retrieval_context": [],
+            "sources": [],
+        }
+
+    app.state.query_service = SimpleNamespace(answer_question=answer_question)
+
+    response = await client.post(
+        "/query",
+        headers=valid_headers,
+        json={
+            "question": "hariç tut",
+            "exclude_sources": ["inline://crm", "inline://support"],
+            "exclude_documents": ["doc-1", "doc-2"],
+        },
+    )
+
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_post_query_passes_acl_filters(client, app, valid_headers):
+    async def answer_question(
+        question,
+        project_id,
+        scope_type=None,
+        scope_id=None,
+        entity_id=None,
+        snapshot_date=None,
+        tags=None,
+        acl=None,
+        retrieval_mode="dense",
+        collections=None,
+        merge_strategy="rrf",
+        exclude_sources=None,
+        exclude_documents=None,
+    ):
+        assert acl == ["tenant:42", "role:manager"]
+        return {
+            "answer": "ACL filtered",
+            "retrieval_mode": "hybrid_rrf",
+            "retrieval_context": [],
+            "sources": [],
+        }
+
+    app.state.query_service = SimpleNamespace(answer_question=answer_question)
+
+    response = await client.post(
+        "/query",
+        headers=valid_headers,
+        json={
+            "question": "izinli dokumanlar",
+            "acl": ["tenant:42", "role:manager"],
+        },
+    )
+
+    assert response.status_code == 200
 
 
 @pytest.mark.asyncio

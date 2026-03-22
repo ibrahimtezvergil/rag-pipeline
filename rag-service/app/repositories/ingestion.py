@@ -116,7 +116,7 @@ class IngestionRepository:
 
     async def get_document_chunks(self, document_id: uuid.UUID) -> list[RagChunk]:
         result = await self.session.scalars(
-            select(RagChunk).where(RagChunk.document_id == document_id)
+            select(RagChunk).where(RagChunk.document_id == document_id).order_by(RagChunk.chunk_index)
         )
         return list(result)
 

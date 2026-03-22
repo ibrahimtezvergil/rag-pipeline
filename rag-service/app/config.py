@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     qdrant_collection: str = "rag_chunks"
     redis_url: str = "redis://localhost:6379/0"
     gemini_api_key: str
-    embed_model: str = "gemini-embedding-2"
+    embed_model: str = "gemini-embedding-2-preview"
     embed_dimension: int = 768
     formatter_model: str = "gemini-2.5-flash"
     formatter_input_char_limit: int = 12000

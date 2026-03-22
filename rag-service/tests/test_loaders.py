@@ -179,42 +179,10 @@ async def test_load_web_source_formats_json_payload_into_natural_language(monkey
 
 
 @pytest.mark.asyncio
-async def test_load_db_source_formats_sql_rows_into_natural_language(monkeypatch):
-    class FakeResult:
-        def mappings(self):
-            return self
-
-        def all(self):
-            return [
-                {"customer": "Acme", "plan": "growth"},
-                {"customer": "Beta", "plan": "starter"},
-            ]
-
-    class FakeConnection:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def execute(self, statement):
-            assert "SELECT customer, plan FROM accounts" in str(statement)
-            return FakeResult()
-
-    class FakeEngine:
-        def connect(self):
-            return FakeConnection()
-
-    monkeypatch.setattr(loaders_module, "engine", FakeEngine())
-
-    result = await loaders_module.load_db_source("SELECT customer, plan FROM accounts")
-
-    assert result["metadata"]["title"] == "SQL Query Result"
-    assert result["metadata"]["row_count"] == 2
-    assert result["metadata"]["query"] == "SELECT customer, plan FROM accounts"
-    assert "Row 1" in result["content"]
-    assert "customer is Acme" in result["content"]
-    assert "plan is starter" in result["content"]
+async def test_load_db_source_is_disabled():
+    # DB loader is disabled until external connection string + tenant isolation is implemented.
+    with pytest.raises(NotImplementedError):
+        await loaders_module.load_db_source("SELECT customer, plan FROM accounts")
 
 
 @pytest.mark.asyncio
