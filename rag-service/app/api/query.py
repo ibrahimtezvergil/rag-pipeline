@@ -6,9 +6,11 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
+from app.deps import chat_rate_limit, query_rate_limit
 from app.schemas.query import ChatRequest, ChatResponse, QueryRequest, QueryResponse
 from app.services.chat import ChatService, create_default_chat_store
 from app.services.query import QueryService
+from app.services.tracing import observe, update_current_observation
 
 
 router = APIRouter()
@@ -40,12 +42,21 @@ def _get_chat_service(
 
 
 @router.post("/query", response_model=QueryResponse)
+@observe(name="query-endpoint", as_type="chain")
 async def query(
     request: Request,
     payload: QueryRequest,
+    _: None = Depends(query_rate_limit),
     service: QueryService = Depends(_get_query_service),
 ):
     project_id = _parse_project_id(request.state.project_id)
+    update_current_observation(
+        metadata={
+            "project_id": str(project_id),
+            "endpoint": "query",
+            "retrieval_mode": payload.retrieval_mode,
+        }
+    )
     result = await service.answer_question(
         payload.question,
         project_id,
@@ -65,12 +76,21 @@ async def query(
 
 
 @router.post("/chat", response_model=ChatResponse)
+@observe(name="chat-endpoint", as_type="chain")
 async def chat(
     request: Request,
     payload: ChatRequest,
+    _: None = Depends(chat_rate_limit),
     service: ChatService = Depends(_get_chat_service),
 ):
     project_id = _parse_project_id(request.state.project_id)
+    update_current_observation(
+        metadata={
+            "project_id": str(project_id),
+            "endpoint": "chat",
+            "session_id_present": bool(payload.session_id),
+        }
+    )
     result = await service.reply(
         payload.message,
         project_id,

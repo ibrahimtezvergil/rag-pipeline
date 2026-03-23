@@ -11,15 +11,25 @@ os.environ["ENV_FILE"] = ".env.test"
 
 from app.main import create_app
 from app.models.db import (
+    Base,
     RagChunk,
     RagChunkDiffLog,
     RagDocument,
     RagIngestionJob,
     RagProject,
+    RagSchedule,
     RagSyncCheckpoint,
     RagTenant,
     TenantSecret,
 )
+from app.services.circuit_breaker import reset_circuit_breakers
+
+
+@pytest.fixture(autouse=True)
+def reset_circuit_breaker_state():
+    reset_circuit_breakers()
+    yield
+    reset_circuit_breakers()
 
 
 @pytest.fixture
@@ -51,8 +61,12 @@ async def integration_session():
     engine = create_async_engine(database_url, future=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
     async with session_factory() as session:
         for model in (
+            RagSchedule,
             RagChunkDiffLog,
             RagSyncCheckpoint,
             TenantSecret,

@@ -2,6 +2,7 @@ import pytest
 import httpx
 
 from app.services import embedder as embedder_module
+from app.services.circuit_breaker import CircuitOpenError
 
 
 @pytest.mark.asyncio
@@ -259,6 +260,39 @@ async def test_embed_image_content_uses_inline_data_payload(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_embedder_short_circuits_when_breaker_open(monkeypatch):
+    called = {"post": False}
+
+    class FakeSettings:
+        gemini_api_key = "secret-key"
+        embed_model = "gemini-embedding-001"
+        embed_dimension = 768
+
+    class FakeBreaker:
+        def before_call(self):
+            raise CircuitOpenError("gemini_embed")
+
+        def record_success(self):
+            return None
+
+        def record_failure(self):
+            return None
+
+    async def fake_post_with_retry(*args, **kwargs):
+        called["post"] = True
+        raise AssertionError("upstream should not be called")
+
+    monkeypatch.setattr(embedder_module, "get_settings", lambda: FakeSettings())
+    monkeypatch.setattr(embedder_module, "get_circuit_breaker", lambda service_name: FakeBreaker())
+    monkeypatch.setattr(embedder_module, "_post_with_retry", fake_post_with_retry)
+
+    with pytest.raises(CircuitOpenError):
+        await embedder_module.embed_text_content("hello", "doc")
+
+    assert called["post"] is False
+
+
+@pytest.mark.asyncio
 async def test_embed_audio_content_uses_inline_data_payload(monkeypatch):
     captured: dict[str, object] = {}
 
@@ -319,3 +353,49 @@ async def test_embed_audio_content_uses_inline_data_payload(monkeypatch):
     }
     assert result["status"] == "completed"
     assert result["dimension"] == 3
+
+
+@pytest.mark.asyncio
+async def test_embed_query_text_updates_trace_metadata(monkeypatch):
+    updates: list[dict[str, object]] = []
+
+    class FakeSettings:
+        embed_model = "gemini-embedding-2-preview"
+        gemini_api_key = "secret-key"
+        embed_dimension = 3
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"embedding": {"values": [0.1, 0.2, 0.3]}}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            return FakeResponse()
+
+    monkeypatch.setattr(embedder_module, "get_settings", lambda: FakeSettings())
+    monkeypatch.setattr(embedder_module.httpx, "AsyncClient", lambda timeout=30.0: FakeClient())
+    monkeypatch.setattr(
+        embedder_module,
+        "update_current_observation",
+        lambda **kwargs: updates.append(kwargs),
+        raising=False,
+    )
+
+    await embedder_module.embed_query_text("Revenue in Q1?")
+
+    assert updates[0]["metadata"] == {
+        "provider": "gemini",
+        "model": "gemini-embedding-2-preview",
+        "task_type": "RETRIEVAL_QUERY",
+        "modality": "text",
+        "title": "query",
+    }

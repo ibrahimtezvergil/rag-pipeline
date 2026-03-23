@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from time import perf_counter
 
 import httpx
 from sqlalchemy import select
@@ -12,10 +13,15 @@ from app.models.db import RagDocument, RagProject
 from app.repositories.ingestion import IngestionRepository
 from app.services.embedder import embed_query_text
 from app.services.llm import generate as generate_text
+from app.services.observability import emit_event, hash_query
 from app.services.prompts import build_query_answer_prompt, get_empty_query_answer
+from app.services.query_expansion import QueryExpansionService
+from app.services.query_cache import RedisQueryCache
 from app.services.reranker import CohereRerankerService
 from app.services.sparse_encoder import encode_sparse_text
+from app.services.tracing import observe, update_current_observation
 from app.services.vector_store import QdrantVectorStore
+from app.services.circuit_breaker import CircuitOpenError
 
 
 class QueryService:
@@ -25,14 +31,19 @@ class QueryService:
         *,
         vector_store: QdrantVectorStore | None = None,
         reranker: CohereRerankerService | None = None,
+        query_expansion: QueryExpansionService | None = None,
+        query_cache: RedisQueryCache | None = None,
         vector_store_factory=None,
     ):
         self.session = session
         self.repository = IngestionRepository(session)
         self.vector_store = vector_store or QdrantVectorStore()
         self.reranker = reranker or CohereRerankerService()
+        self.query_expansion = query_expansion or QueryExpansionService()
+        self.query_cache = query_cache or RedisQueryCache()
         self.vector_store_factory = vector_store_factory or (lambda collection_name: QdrantVectorStore(collection_name=collection_name))
 
+    @observe(name="query-service", as_type="chain")
     async def answer_question(
         self,
         question: str,
@@ -51,12 +62,56 @@ class QueryService:
         tags: list[str] | None = None,
     ) -> dict[str, object]:
         project = await self.session.get(RagProject, project_id)
+        query_started = perf_counter()
         retrieval_config = self._resolve_retrieval_config(
             project.config if project is not None else {},
             retrieval_mode,
         )
-        query_embedding = await embed_query_text(question)
+        settings = get_settings()
+        project_config = project.config if project is not None else {}
+        expanded_query = await self.query_expansion.expand(
+            question,
+            use_llm=bool(project_config.get("query_expansion_use_llm", settings.query_expansion_use_llm)),
+        )
+        retrieval_question = expanded_query.expanded_query
+        query_hash_value = hash_query(
+            question=question,
+            tenant_id=str(project.tenant_id) if project is not None else "",
+            project_id=str(project_id),
+        )
+        cache_key = self.query_cache.build_key(
+            question=question,
+            tenant_id=str(project.tenant_id) if project is not None else "",
+            project_id=str(project_id),
+            retrieval_mode=retrieval_mode,
+            collections=collections,
+            merge_strategy=merge_strategy,
+            exclude_sources=exclude_sources,
+            exclude_documents=exclude_documents,
+            acl=acl,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            entity_id=entity_id,
+            snapshot_date=snapshot_date,
+            tags=tags,
+        )
+        cached_response = await self.query_cache.get(cache_key)
+        if cached_response is not None:
+            update_current_observation(metadata={"cache_hit": True, "query_hash": query_hash_value})
+            return cached_response
+        query_embedding = await embed_query_text(retrieval_question)
+        update_current_observation(
+            metadata={
+                "tenant_id": str(project.tenant_id) if project is not None else "",
+                "project_id": str(project_id),
+                "query_hash": query_hash_value,
+                "retrieval_mode": retrieval_mode,
+                "cache_hit": False,
+            }
+        )
         response_retrieval_mode = "metadata_fallback"
+        reranker_ms: int | None = None
+        llm_ms: int | None = None
         target_collections = collections or [None]
         if retrieval_mode == "hybrid":
             dense_hits = await self._semantic_ranked_document_ids(
@@ -72,7 +127,7 @@ class QueryService:
             )
             sparse_hits = await self._sparse_ranked_document_ids(
                 project_id,
-                question=question,
+                question=retrieval_question,
                 scope_type=scope_type,
                 scope_id=scope_id,
                 entity_id=entity_id,
@@ -87,7 +142,7 @@ class QueryService:
         elif retrieval_mode == "sparse":
             ranked_document_ids, ranked_chunk_ids, chunk_scores = await self._sparse_ranked_document_ids(
                 project_id,
-                question=question,
+                question=retrieval_question,
                 scope_type=scope_type,
                 scope_id=scope_id,
                 entity_id=entity_id,
@@ -132,24 +187,35 @@ class QueryService:
                 top_documents = [document for _, document in ranked][:3]
 
         if not top_documents:
-            return {
+            response = {
                 "answer": get_empty_query_answer(),
                 "retrieval_mode": "empty",
+                "confidence_score": None,
+                "confidence_warning": None,
                 "retrieval_context": [],
                 "sources": [],
             }
+            await self.query_cache.set(
+                cache_key=cache_key,
+                project_id=str(project_id),
+                value=response,
+            )
+            return response
 
         source_entries = await self._build_sources(question, top_documents, ranked_chunk_ids, chunk_scores)
         source_entries = self._apply_score_threshold(
             source_entries,
             threshold=float(retrieval_config.get("score_threshold", 0.0)),
         )
+        rerank_started = perf_counter()
         source_entries, reranked = await self._maybe_rerank_sources(
             question,
             source_entries,
-            project_config=(project.config if project is not None else {}),
+            project_config=project_config,
             top_n=int(retrieval_config.get("rerank_top_n", 8)),
         )
+        if reranked:
+            reranker_ms = max(0, int((perf_counter() - rerank_started) * 1000))
         source_entries = self._apply_negative_filters(
             source_entries,
             exclude_sources=exclude_sources,
@@ -157,23 +223,57 @@ class QueryService:
         )
         source_entries = self._apply_acl_filter(source_entries, acl=acl)
         final_sources = source_entries[: int(retrieval_config.get("top_k", 3))]
+        confidence_score, confidence_warning = self._build_confidence(final_sources)
         answer = ""
         if final_sources:
             try:
+                llm_started = perf_counter()
                 prompt = build_query_answer_prompt(question=question, sources=final_sources)
                 answer = await generate_text(prompt)
+                llm_ms = max(0, int((perf_counter() - llm_started) * 1000))
             except Exception:
                 answer = self._fallback_answer(final_sources)
         if not answer:
             titles = ", ".join(str(source.get("title", "")) for source in final_sources)
             answer = f"Ilgili indexed kaynaklar: {titles}"
 
-        return {
+        final_retrieval_mode = "hybrid_rrf_rerank" if reranked else response_retrieval_mode
+        emit_event(
+            "query.completed",
+            {
+                "tenant_id": str(project.tenant_id) if project is not None else "",
+                "project_id": str(project_id),
+                "query_hash": query_hash_value,
+                "retrieval_mode": final_retrieval_mode,
+                "reranker_ms": reranker_ms,
+                "llm_ms": llm_ms,
+                "top_chunk_score": final_sources[0].get("score") if final_sources else None,
+                "source_count": len(final_sources),
+                "duration_ms": max(0, int((perf_counter() - query_started) * 1000)),
+            },
+        )
+        update_current_observation(
+            metadata={
+                "source_count": len(final_sources),
+                "final_retrieval_mode": final_retrieval_mode,
+                "confidence_score": confidence_score,
+            }
+        )
+
+        response = {
             "answer": answer,
-            "retrieval_mode": "hybrid_rrf_rerank" if reranked else response_retrieval_mode,
+            "retrieval_mode": final_retrieval_mode,
+            "confidence_score": confidence_score,
+            "confidence_warning": confidence_warning,
             "retrieval_context": self._build_retrieval_context(final_sources),
             "sources": final_sources,
         }
+        await self.query_cache.set(
+            cache_key=cache_key,
+            project_id=str(project_id),
+            value=response,
+        )
+        return response
 
     async def _get_indexed_documents(
         self,
@@ -278,7 +378,7 @@ class QueryService:
                         tags=tags,
                         limit=6,
                     )
-            except httpx.HTTPError:
+            except (httpx.HTTPError, CircuitOpenError):
                 continue
             collection_hits.append(self._collect_ranked_hits(search_results))
         if not collection_hits:
@@ -379,7 +479,7 @@ class QueryService:
                         tags=tags,
                         limit=6,
                     )
-            except httpx.HTTPError:
+            except (httpx.HTTPError, CircuitOpenError):
                 continue
             collection_hits.append(self._collect_ranked_hits(search_results))
         if not collection_hits:
@@ -519,7 +619,7 @@ class QueryService:
                 documents=documents,
                 top_n=min(len(documents), top_n),
             )
-        except httpx.HTTPError:
+        except (httpx.HTTPError, CircuitOpenError):
             return source_entries, False
 
         reranked_sources: list[dict[str, object]] = []
@@ -646,6 +746,30 @@ class QueryService:
             for source in source_entries
             if str(source.get("snippet", "")).strip()
         ]
+
+    def _build_confidence(
+        self,
+        source_entries: list[dict[str, object]],
+    ) -> tuple[float | None, str | None]:
+        scores: list[float] = []
+        for source in source_entries:
+            raw_score = source.get("score")
+            if isinstance(raw_score, int | float):
+                scores.append(self._normalize_confidence_score(float(raw_score)))
+        if not scores:
+            return None, None
+
+        confidence_score = sum(scores) / len(scores)
+        if confidence_score < 0.35:
+            return confidence_score, "Bu yanit dusuk guvenle olusturuldu; kaynaklari kontrol edin."
+        return confidence_score, None
+
+    def _normalize_confidence_score(self, score: float) -> float:
+        if score <= 0:
+            return 0.0
+        if score <= 1.0:
+            return score
+        return score / (score + 1.0)
 
     def _rank_documents(self, question: str, documents: list[RagDocument]) -> list[tuple[int, RagDocument]]:
         terms = self._query_terms(question)

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from arq import cron
 from arq.connections import RedisSettings
 from arq.worker import Retry, func
 
 from app.config import get_settings
 from app.db.session import AsyncSessionLocal
 from app.services.ingestion import IngestionService
+from workers.tasks.schedules import run_schedule_tick
 
 
 MAX_RETRIES = 3
@@ -44,7 +46,23 @@ async def run_ingest_job(ctx: dict[str, object], payload: dict[str, str]) -> dic
         raise Retry(defer=2 ** (job_try - 1)) from exc
 
 
+async def run_stale_reembed_scan(ctx: dict[str, object]) -> dict[str, int]:
+    service = ctx.get("ingestion_service")
+    if service is None:
+        service = IngestionService(AsyncSessionLocal())
+
+    return await service.requeue_stale_documents(limit=100)
+
+
 class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
-    functions = [func(run_ingest_job, max_tries=MAX_RETRIES)]
+    functions = [
+        func(run_ingest_job, max_tries=MAX_RETRIES),
+        func(run_schedule_tick, max_tries=1),
+        func(run_stale_reembed_scan, max_tries=1),
+    ]
+    cron_jobs = [
+        cron(run_schedule_tick, name="run_schedule_tick", minute=set(range(60)), second=0),
+        cron(run_stale_reembed_scan, name="run_stale_reembed_scan", minute=0, second=0),
+    ]
     retry_jobs = True

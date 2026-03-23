@@ -102,8 +102,8 @@
 - [ ] Config toggle — `use_graph: true/false`
 
 ### Langfuse Entegrasyonu
-- [x] Langfuse Docker Compose'a ekle (self-host) — Ref: `rag-service/docker-compose.yml` | Akış: `compose up -> trace stack hazır`
-- [ ] FastAPI pipeline'larına `@observe` decorator
+- [x] Langfuse Docker Compose'a ekle (self-host) — Ref: `rag-service/docker-compose.yml` | Akış: `compose up -> langfuse_db + langfuse ayrı kalkar, app DB ile migration çakışmaz`
+- [x] FastAPI pipeline'larına `@observe` decorator — Ref: `rag-service/app/services/tracing.py`, `rag-service/app/api/query.py`, `rag-service/app/api/ingest.py`, `rag-service/app/services/query.py`, `rag-service/app/services/ingestion.py`, `rag-service/app/services/llm.py`, `rag-service/app/services/embedder.py`, `rag-service/app/services/reranker.py` | Akış: `heavy endpoint -> root observe -> safe metadata update -> query/ingest/provider child spans -> fail-open tracing`
 - [ ] LangGraph node'larına trace/span ekleme
 - [ ] Maliyet ve latency dashboard kurulumu
 
@@ -113,44 +113,44 @@
 - [x] Takip sorusunda history otomatik inject — Ref: `rag-service/app/services/chat.py` | Akış: `history load -> inject prompt -> query service`
 
 ### Caching
-- [ ] Query cache — `sha256(query + tenant_id + scope_id)` → Redis TTL 1 saat
-- [ ] Cache invalidation — collection re-index edilince
+- [x] Query cache — `sha256(query + tenant_id + scope_id)` → Redis TTL 1 saat — Ref: `rag-service/app/services/query_cache.py`, `rag-service/app/services/query.py` | Akış: `request fingerprint -> Redis get -> cache hit return / miss run pipeline -> JSON store (TTL 1h)`
+- [x] Cache invalidation — collection re-index edilince — Ref: `rag-service/app/services/query_cache.py`, `rag-service/app/services/ingestion.py` | Akış: `successful ingest/delete -> project cache index lookup -> cached query keys delete`
 
 ### Re-index & Versioning
-- [ ] Document versioning — `version++`, `previous_document_id`
-- [ ] Chunk-level hash karşılaştırma — sadece değişen chunk'lar embed edilir
-- [ ] Diff log yazımı — `rag_chunk_diff_log` her ingestion'da doldur
-- [ ] Scheduled re-index — `POST /schedules`, cron bazlı ARQ job
-- [ ] `rag_sync_checkpoints` — connector bazlı cursor_state güncelleme
+- [x] Document versioning — `version++`, `previous_document_id` — Ref: `rag-service/app/repositories/ingestion.py`, `rag-service/app/services/ingestion.py` | Akış: `same project+source_ref ingest -> latest version lookup -> new document version++ -> successful index sonrası previous version supersede/archive`
+- [x] Chunk-level hash karşılaştırma — sadece değişen chunk'lar embed edilir — Ref: `rag-service/app/services/ingestion.py`, `rag-service/app/services/vector_store.py` | Akış: `previous child hashes + qdrant vector fetch -> unchanged chunk vector reuse -> only changed chunks re-embed`
+- [x] Diff log yazımı — `rag_chunk_diff_log` her ingestion'da doldur — Ref: `rag-service/app/repositories/ingestion.py`, `rag-service/app/services/ingestion.py` | Akış: `ingest compare -> new/modified/unchanged/deleted classification -> rag_chunk_diff_log rows`
+- [x] Scheduled re-index — `POST /schedules`, cron bazlı ARQ job — Ref: `rag-service/app/api/schedules.py`, `rag-service/app/services/schedules.py`, `rag-service/workers/tasks/schedules.py` | Akış: `POST /schedules -> rag_schedules persist(next_run_at) -> ARQ cron tick due schedule scan -> checkpoint merge -> async ingestion enqueue`
+- [x] `rag_sync_checkpoints` — connector bazlı cursor_state güncelleme — Ref: `rag-service/app/repositories/ingestion.py`, `rag-service/app/services/ingestion.py` | Akış: `ingest payload source_connector_id/cursor_state -> document metadata -> successful indexing sonrası checkpoint upsert(last_synced_at, cursor_state)`
 
 ### Observability
-- [ ] Structured JSON log — ingestion (chunk_indexed, modality, embed_ms, token_count)
-- [ ] Structured JSON log — query (query_hash, reranker_ms, llm_ms, top_chunk_score)
-- [ ] Query içeriği loglanmaz — sadece SHA256 hash (GDPR)
-- [ ] Embedding versioning — stale chunk tespiti, ARQ kuyruğuna al
+- [x] Structured JSON log — ingestion (chunk_indexed, modality, embed_ms, token_count) — Ref: `rag-service/app/services/observability.py`, `rag-service/app/services/ingestion.py` | Akış: `chunk indexed -> event payload -> logger.info(json)`
+- [x] Structured JSON log — query (query_hash, reranker_ms, llm_ms, top_chunk_score) — Ref: `rag-service/app/services/observability.py`, `rag-service/app/services/query.py` | Akış: `query finish -> metrics/hash -> logger.info(json)`
+- [x] Query içeriği loglanmaz — sadece SHA256 hash (GDPR) — Ref: `rag-service/app/services/observability.py`, `rag-service/app/services/query.py` | Akış: `question -> sha256(tenant+project scoped) -> log payload`
+- [x] Embedding versioning — stale chunk tespiti, ARQ kuyruğuna al — Ref: `rag-service/app/services/ingestion.py`, `rag-service/app/repositories/ingestion.py`, `rag-service/workers/tasks/ingest.py` | Akış: `latest indexed docs -> child chunk embed_version compare -> stale doc detect -> async ingestion requeue -> hourly ARQ scan`
 
 ### Diğer
 - [ ] Audio metadata pipeline (opsiyonel) — Whisper + pyannote diarization (timestamp + speaker metadata için)
 - [ ] Ingestion webhook callback — HMAC-SHA256 imzalı, `callback_url` desteği
-- [ ] Rate limiting — Redis sliding window, project_id bazlı, 429 + Retry-After
-- [ ] Circuit breaker — Qdrant/Gemini/Cohere/LLM per-service kurallar
-- [ ] Confidence score — top chunk score ortalaması, düşükse uyarı
-- [ ] Query expansion — sinonim sözlüğü + LLM genişletme
+- [x] Rate limiting — Redis sliding window, project_id bazlı, 429 + Retry-After — Ref: `rag-service/app/services/rate_limit.py`, `rag-service/app/deps.py`, `rag-service/app/api/query.py`, `rag-service/app/api/ingest.py` | Akış: `project+route -> redis sliding window -> 429/Retry-After`
+- [x] Circuit breaker — Qdrant/Gemini/Cohere/LLM per-service kurallar — Ref: `rag-service/app/services/circuit_breaker.py`, `rag-service/app/services/llm.py`, `rag-service/app/services/embedder.py`, `rag-service/app/services/reranker.py`, `rag-service/app/services/vector_store.py`, `rag-service/app/services/query.py` | Akış: `provider boundary -> before_call -> upstream call -> success/failure state update -> fast-fail veya mevcut query fallback`
+- [x] Confidence score — top chunk score ortalaması, düşükse uyarı — Ref: `rag-service/app/services/query.py`, `rag-service/app/schemas/query.py` | Akış: `final source scores -> normalize -> average -> confidence_score + optional warning`
+- [x] Query expansion — sinonim sözlüğü + LLM genişletme — Ref: `rag-service/app/services/query_expansion.py`, `rag-service/app/services/query.py` | Akış: `question -> synonym expand -> optional llm rewrite -> retrieval input`
 
 ---
 
 ## P3 — Production Olgunlaşma
 
 ### Veri Kalitesi
-- [ ] Semantic deduplication — embedding similarity > 0.97 ise atla
-- [ ] Adaptive chunking — içerik yoğunluğuna göre otomatik chunk size
+- [x] Semantic deduplication — embedding similarity > 0.97 ise atla — Ref: `rag-service/app/services/ingestion.py`, `rag-service/app/services/vector_store.py`, `rag-service/app/config.py` | Akış: `text child embed -> qdrant nearest-neighbor duplicate check -> score>=0.97 ise chunk skip -> diğer chunklar normal upsert`
+- [x] Adaptive chunking — içerik yoğunluğuna göre otomatik chunk size — Ref: `rag-service/app/services/chunking.py` | Akış: `raw chunk normalize -> punctuation/list/cümle yoğunluğu heuristiği -> adaptive max_tokens -> split`
 - [ ] RAG Evaluation Pipeline — RAGAS metrikleri (faithfulness, answer_relevancy, context_recall)
 - [ ] Feedback loop — `POST /feedback` (rating, chunk_ids) → kötü chunk'ları düşür
 
 ### Ölçek
-- [ ] Qdrant post-filtering fetch — sadece ID+metadata Qdrant'ta, metin PostgreSQL'den
+- [x] Qdrant post-filtering fetch — sadece ID+metadata Qdrant'ta, metin PostgreSQL'den — Ref: `rag-service/app/services/vector_store.py`, `rag-service/app/services/query.py`, `rag-service/app/repositories/ingestion.py` | Akış: `qdrant returns chunk_id/document_id/score -> query service DB chunk fetch -> snippet/parent_context postgres chunk content`
 - [ ] PostgreSQL partition stratejisi — tiered: shared (<100K chunk), dedicated (≥100K)
-- [ ] PgBouncer — transaction pool_mode, 20-50 pool size
+- [x] PgBouncer — transaction pool_mode, 20-50 pool size — Ref: `rag-service/docker-compose.yml`, `rag-service/app/db/session.py`, `rag-service/migrations/env.py`, `rag-service/docker/pgbouncer/Dockerfile` | Akış: `api/worker -> pgbouncer:6432 transaction pool -> postgres`, `runtime URL prepared_statement_cache_size=0 + NullPool`, `alembic -> DATABASE_DIRECT_URL`, `container non-root çalışır`
 - [ ] Document relationship — `related_chunks` metadata, bölümler arası referans
 
 ### Admin & Yönetim
@@ -362,3 +362,38 @@ Review bulgularının tamamı kod üzerinde uygulandı. Unit testler geçiyor (1
 - Audio loader: `[x]` → `[ ]` (120s clip split + audio embed implement edilmemiş)
 - DB loader: `[x]` → `[ ]` (tenant izolasyon sorunu nedeniyle devre dışı)
 - Conversation Memory 3 madde: `[ ]` → `[x]` (`chat.py`'de zaten implement edilmişti)
+
+---
+
+## Deploy Doğrulama Notu — 2026-03-23
+
+Production smoke blocker paketi canlı olarak doğrulandı.
+
+### ✅ Doğrulananlar
+
+- `docker-compose up -d` artık build/start ediyor — `httpx==0.27.2` ile `crawl4ai==0.6.3` dependency çakışması çözüldü.
+- `PgBouncer` non-root container olarak kalkıyor.
+- `Langfuse` ayrı `langfuse_db` üstünde kalkıyor; app DB ile Prisma migration çakışmıyor.
+- Alembic merge revision eklendi (`004_merge_heads`); temiz `ragdb_smoke` veritabanında `alembic upgrade head` başarılı geçti.
+- Canlı `/health` kontrolü geçti: `postgres`, `redis`, `qdrant`, `embedder` = `up`.
+- Canlı sync PDF ingest geçti:
+  - `POST /ingest?mode=sync` → `201`
+  - `GET /ingest/{id}` → `status: indexed`
+- Canlı source-backed `/query` geçti:
+  - soru: `Which invoice was paid and for which customer?`
+  - cevap: `Invoice INV-1001 was paid for customer Acme Corp.`
+- Canlı rate-limit geçti:
+  - 61 istek → `{200: 59, 429: 2}`
+  - `Retry-After` header döndü
+
+### 🛠️ Bu doğrulamayı mümkün kılan düzeltmeler
+
+- `CollectionsService` ile `QdrantVectorStore` aynı named dense+sparse collection şemasına çekildi.
+- `ensure_collection()` mevcut collection'da `409` ile patlamaz hale getirildi.
+- Sparse encoder indeks aralığı Qdrant'ın kabul ettiği 32-bit aralığa indirildi.
+- Sync ingest hata yolunda `job/document` artık `failed` durumuna finalize edilir; `running/indexing` halde kalmaz.
+
+### ⚠️ Açık Kalanlar
+
+- `DB loader` hâlâ kapalı.
+- `Latency budget enforcement` ve `Token budget enforcement` hâlâ açık.

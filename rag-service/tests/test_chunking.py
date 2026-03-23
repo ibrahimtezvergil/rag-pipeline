@@ -65,3 +65,33 @@ def test_build_chunks_drops_short_and_empty_segments():
     assert chunks == [
         {"content": "useful words live here for retrieval quality", "page_number": None}
     ]
+
+
+def test_build_chunks_uses_smaller_windows_for_dense_list_content():
+    content = (
+        "item1: alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu "
+        "item2: nu xi omicron pi rho sigma tau upsilon phi chi psi omega"
+    )
+
+    chunks = build_chunks("web", content, {}, min_tokens=4, max_tokens=12)
+
+    assert [chunk["content"] for chunk in chunks] == [
+        "item1: alpha beta gamma delta epsilon",
+        "zeta eta theta iota kappa lambda",
+        "mu item2: nu xi omicron pi",
+        "rho sigma tau upsilon phi chi",
+    ]
+
+
+def test_build_chunks_keeps_larger_windows_for_narrative_content():
+    content = (
+        "This article explains the quarterly revenue outlook with several detailed examples and "
+        "plain language so the reader can follow the broader business narrative without abrupt jumps."
+    )
+
+    chunks = build_chunks("web", content, {}, min_tokens=4, max_tokens=12)
+
+    assert [chunk["content"] for chunk in chunks] == [
+        "This article explains the quarterly revenue outlook with several detailed examples and",
+        "plain language so the reader can follow the broader business narrative without",
+    ]

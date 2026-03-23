@@ -23,7 +23,7 @@ _STOPWORDS = {
 
 
 def _token_to_index(token: str) -> int:
-    digest = hashlib.blake2b(token.encode("utf-8"), digest_size=8).digest()
+    digest = hashlib.blake2b(token.encode("utf-8"), digest_size=4).digest()
     return int.from_bytes(digest, "big")
 
 

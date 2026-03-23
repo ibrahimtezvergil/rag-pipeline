@@ -164,6 +164,33 @@ class RagSyncCheckpoint(Base):
     )
 
 
+class RagSchedule(Base):
+    __tablename__ = "rag_schedules"
+
+    id: Mapped[uuid.UUID] = uuid_column()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("rag_projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("rag_tenants.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_connector_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    source_type: Mapped[str] = mapped_column(Text, nullable=False)
+    source_ref: Mapped[str | None] = mapped_column(Text)
+    cron_expr: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_json: Mapped[dict] = mapped_column("payload", JSON, default=dict, nullable=False)
+    enabled: Mapped[bool] = mapped_column(BOOLEAN, default=True, nullable=False)
+    last_run_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    next_run_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), default=utc_now, nullable=False
+    )
+
+
 class TenantSecret(Base):
     __tablename__ = "tenant_secrets"
 

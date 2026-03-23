@@ -3,10 +3,10 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.db import RagChunk, RagDocument, RagIngestionJob, RagProject
+from app.models.db import RagChunk, RagChunkDiffLog, RagDocument, RagIngestionJob, RagProject, RagSyncCheckpoint
 
 
 class IngestionRepository:
@@ -27,6 +27,9 @@ class IngestionRepository:
         title: str,
         content_hash: str,
         metadata: dict,
+        version: int = 1,
+        previous_document_id: uuid.UUID | None = None,
+        source_connector_id: uuid.UUID | None = None,
     ) -> RagDocument:
         document = RagDocument(
             project_id=project_id,
@@ -36,11 +39,54 @@ class IngestionRepository:
             status=status,
             title=title,
             content_hash=content_hash,
+            version=version,
+            previous_document_id=previous_document_id,
+            source_connector_id=source_connector_id,
             metadata_json=metadata,
         )
         self.session.add(document)
         await self.session.flush()
         return document
+
+    async def get_latest_document_by_source_ref(
+        self,
+        project_id: uuid.UUID,
+        source_ref: str,
+    ) -> RagDocument | None:
+        result = await self.session.scalars(
+            select(RagDocument)
+            .where(
+                RagDocument.project_id == project_id,
+                RagDocument.source_ref == source_ref,
+                RagDocument.status != "deleted",
+            )
+            .order_by(RagDocument.version.desc(), RagDocument.created_at.desc())
+            .limit(1)
+        )
+        return result.first()
+
+    async def list_latest_documents(self) -> list[RagDocument]:
+        latest_versions = (
+            select(
+                RagDocument.project_id.label("project_id"),
+                RagDocument.source_ref.label("source_ref"),
+                func.max(RagDocument.version).label("max_version"),
+            )
+            .where(RagDocument.status != "deleted")
+            .group_by(RagDocument.project_id, RagDocument.source_ref)
+            .subquery()
+        )
+        result = await self.session.scalars(
+            select(RagDocument)
+            .join(
+                latest_versions,
+                (RagDocument.project_id == latest_versions.c.project_id)
+                & (RagDocument.source_ref == latest_versions.c.source_ref)
+                & (RagDocument.version == latest_versions.c.max_version),
+            )
+            .order_by(RagDocument.created_at.desc())
+        )
+        return list(result)
 
     async def create_job(
         self,
@@ -120,8 +166,24 @@ class IngestionRepository:
         )
         return list(result)
 
+    async def get_child_chunks(self, document_id: uuid.UUID) -> list[RagChunk]:
+        result = await self.session.scalars(
+            select(RagChunk)
+            .where(
+                RagChunk.document_id == document_id,
+                RagChunk.parent_chunk_id.is_not(None),
+            )
+            .order_by(RagChunk.chunk_index)
+        )
+        return list(result)
+
     async def soft_delete_document(self, document: RagDocument) -> RagDocument:
         document.status = "deleted"
+        await self.session.flush()
+        return document
+
+    async def supersede_document(self, document: RagDocument) -> RagDocument:
+        document.status = "superseded"
         await self.session.flush()
         return document
 
@@ -178,3 +240,44 @@ class IngestionRepository:
             select(RagChunk).where(RagChunk.id.in_(chunk_ids))
         )
         return list(result)
+
+    async def create_chunk_diff_logs(
+        self,
+        job_id: uuid.UUID,
+        entries: list[dict[str, object]],
+    ) -> list[RagChunkDiffLog]:
+        rows: list[RagChunkDiffLog] = []
+        for entry in entries:
+            row = RagChunkDiffLog(
+                job_id=job_id,
+                chunk_id=entry.get("chunk_id"),
+                operation=str(entry["operation"]),
+            )
+            self.session.add(row)
+            rows.append(row)
+        await self.session.flush()
+        return rows
+
+    async def upsert_sync_checkpoint(
+        self,
+        source_connector_id: uuid.UUID,
+        cursor_state: dict,
+    ) -> RagSyncCheckpoint:
+        result = await self.session.scalars(
+            select(RagSyncCheckpoint).where(
+                RagSyncCheckpoint.source_connector_id == source_connector_id
+            )
+        )
+        checkpoint = result.first()
+        if checkpoint is None:
+            checkpoint = RagSyncCheckpoint(
+                source_connector_id=source_connector_id,
+                cursor_state=cursor_state,
+                last_synced_at=datetime.now(UTC),
+            )
+            self.session.add(checkpoint)
+        else:
+            checkpoint.cursor_state = cursor_state
+            checkpoint.last_synced_at = datetime.now(UTC)
+        await self.session.flush()
+        return checkpoint

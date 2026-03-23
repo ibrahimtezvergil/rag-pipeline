@@ -6,6 +6,8 @@ import base64
 import httpx
 
 from app.config import get_settings
+from app.services.circuit_breaker import get_circuit_breaker
+from app.services.tracing import observe, update_current_observation
 
 
 async def prepare_pdf_embedding(source_ref: str, metadata: dict[str, object]) -> dict[str, object]:
@@ -69,6 +71,7 @@ async def embed_image_content(
         ],
         title=title,
         task_type="RETRIEVAL_DOCUMENT",
+        modality="image",
     )
 
 
@@ -90,6 +93,7 @@ async def embed_audio_content(
         ],
         title=title,
         task_type="RETRIEVAL_DOCUMENT",
+        modality="audio",
     )
 
 
@@ -103,16 +107,30 @@ async def embed_text_content(
         parts=[{"text": content}],
         title=title,
         task_type=task_type,
+        modality="text",
     )
 
 
+@observe(name="gemini-embed", as_type="embedding")
 async def _embed_parts(
     *,
     parts: list[dict[str, object]],
     title: str,
     task_type: str,
+    modality: str,
 ) -> dict[str, object]:
     settings = get_settings()
+    update_current_observation(
+        metadata={
+            "provider": "gemini",
+            "model": settings.embed_model,
+            "task_type": task_type,
+            "modality": modality,
+            "title": title,
+        }
+    )
+    breaker = get_circuit_breaker("gemini_embed")
+    breaker.before_call()
     url = (
         "https://generativelanguage.googleapis.com/v1beta/"
         f"models/{settings.embed_model}:embedContent"
@@ -129,7 +147,12 @@ async def _embed_parts(
         "Content-Type": "application/json",
     }
 
-    response = await _post_with_retry(url, headers=headers, payload=payload)
+    try:
+        response = await _post_with_retry(url, headers=headers, payload=payload)
+    except Exception:
+        breaker.record_failure()
+        raise
+    breaker.record_success()
 
     values = response.json()["embedding"]["values"]
     return {

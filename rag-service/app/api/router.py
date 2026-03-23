@@ -4,6 +4,7 @@ from app.api.collections import router as collections_router
 from app.api.health import router as health_router
 from app.api.ingest import router as ingest_router
 from app.api.query import router as query_router
+from app.api.schedules import router as schedules_router
 from app.deps import RequestContext, get_request_context
 
 
@@ -12,6 +13,7 @@ api_router.include_router(collections_router)
 api_router.include_router(health_router)
 api_router.include_router(ingest_router)
 api_router.include_router(query_router)
+api_router.include_router(schedules_router)
 
 
 @api_router.get("/protected")

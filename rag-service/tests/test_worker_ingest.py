@@ -6,7 +6,7 @@ from arq.worker import Retry
 from app.schemas.ingest import IngestRequest
 from app.services import ingestion as ingestion_service_module
 from app.services.ingestion import IngestionService
-from workers.tasks.ingest import run_ingest_job
+from workers.tasks.ingest import run_ingest_job, run_stale_reembed_scan
 
 
 class FakeDispatcher:
@@ -28,6 +28,9 @@ class FakeVectorStore:
     async def upsert_chunks(self, chunks: list[dict[str, object]]) -> list[str]:
         self.upsert_calls.append({"chunks": chunks})
         return [f"00000000-0000-0000-0000-{index + 1:012d}" for index, _ in enumerate(chunks)]
+
+    async def find_semantic_duplicate(self, **kwargs):
+        return None
 
 
 @pytest.mark.asyncio
@@ -250,6 +253,21 @@ async def test_run_ingest_job_marks_failure_after_final_retry(
     assert job.error_message == "loader exploded"
     assert document is not None
     assert document.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_run_stale_reembed_scan_calls_service():
+    calls: list[int] = []
+
+    class FakeIngestionService:
+        async def requeue_stale_documents(self, *, limit: int = 100):
+            calls.append(limit)
+            return {"stale_document_count": 2}
+
+    result = await run_stale_reembed_scan({"ingestion_service": FakeIngestionService()})
+
+    assert result == {"stale_document_count": 2}
+    assert calls == [100]
 
 
 @pytest.mark.asyncio

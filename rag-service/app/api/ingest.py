@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
+from app.deps import ingest_batch_rate_limit, ingest_rate_limit
 from app.schemas.ingest import (
     IngestBatchRequest,
     IngestBatchResponse,
@@ -15,6 +16,7 @@ from app.schemas.ingest import (
     IngestStatusResponse,
 )
 from app.services.ingestion import IngestionService
+from app.services.tracing import observe, update_current_observation
 
 
 router = APIRouter()
@@ -37,17 +39,27 @@ def _get_ingestion_service(
 
 
 @router.post("/ingest", response_model=IngestResponse)
+@observe(name="ingest-endpoint", as_type="chain")
 async def create_ingest(
     request: Request,
     response: Response,
     payload: IngestRequest,
     mode: Literal["sync", "async"] | None = Query(default=None),
+    _: None = Depends(ingest_rate_limit),
     service: IngestionService = Depends(_get_ingestion_service),
 ):
     if mode is not None:
         payload = payload.model_copy(update={"mode": mode})
 
     project_id = _parse_project_id(request.state.project_id)
+    update_current_observation(
+        metadata={
+            "project_id": str(project_id),
+            "endpoint": "ingest",
+            "source_type": payload.source_type,
+            "mode": payload.mode,
+        }
+    )
     result = await service.create_ingestion_job(payload, project_id)
 
     response.status_code = (
@@ -57,16 +69,25 @@ async def create_ingest(
 
 
 @router.post("/ingest/batch", response_model=IngestBatchResponse)
+@observe(name="ingest-batch-endpoint", as_type="chain")
 async def create_ingest_batch(
     request: Request,
     response: Response,
     payload: IngestBatchRequest,
+    _: None = Depends(ingest_batch_rate_limit),
     service: IngestionService = Depends(_get_ingestion_service),
 ):
     if any(item.mode != "async" for item in payload.items):
         raise HTTPException(status_code=400, detail="Batch ingestion only supports async mode")
 
     project_id = _parse_project_id(request.state.project_id)
+    update_current_observation(
+        metadata={
+            "project_id": str(project_id),
+            "endpoint": "ingest_batch",
+            "item_count": len(payload.items),
+        }
+    )
     items = await service.create_ingestion_batch(payload.items, project_id)
 
     response.status_code = status.HTTP_202_ACCEPTED

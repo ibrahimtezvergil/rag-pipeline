@@ -22,6 +22,8 @@ class IngestRequest(BaseModel):
     entity_id: str | None = None
     record_ids: list[str] | None = None
     snapshot_date: str | None = None
+    source_connector_id: str | None = None
+    cursor_state: dict | None = None
     tags: list[str] | None = None
     acl: list[str] | None = None
     mode: IngestMode = "async"

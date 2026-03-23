@@ -5,6 +5,7 @@ import uuid
 import httpx
 
 from app.config import get_settings
+from app.services.circuit_breaker import get_circuit_breaker
 
 
 class QdrantVectorStore:
@@ -26,9 +27,14 @@ class QdrantVectorStore:
                 "sparse": {}
             },
         }
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=5.0) as client:
-            response = await client.put(f"/collections/{self.collection_name}", json=payload)
-            response.raise_for_status()
+        async def operation():
+            async with httpx.AsyncClient(base_url=self.base_url, timeout=5.0) as client:
+                response = await client.put(f"/collections/{self.collection_name}", json=payload)
+                if getattr(response, "status_code", 200) == 409:
+                    return None
+                response.raise_for_status()
+
+        await self._run_qdrant_call(operation)
 
     async def upsert_chunks(self, chunks: list[dict[str, object]]) -> list[str]:
         points = []
@@ -67,12 +73,15 @@ class QdrantVectorStore:
                 }
             )
 
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=10.0) as client:
-            response = await client.put(
-                f"/collections/{self.collection_name}/points",
-                json={"points": points},
-            )
-            response.raise_for_status()
+        async def operation():
+            async with httpx.AsyncClient(base_url=self.base_url, timeout=10.0) as client:
+                response = await client.put(
+                    f"/collections/{self.collection_name}/points",
+                    json={"points": points},
+                )
+                response.raise_for_status()
+
+        await self._run_qdrant_call(operation)
 
         return point_ids
 
@@ -99,10 +108,10 @@ class QdrantVectorStore:
         for tag in tags or []:
             must_filters.append({"key": "tags", "match": {"value": tag}})
 
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=10.0) as client:
-            response = await client.post(
+        response = await self._run_qdrant_call(
+            lambda: self._post_json(
                 f"/collections/{self.collection_name}/points/scroll",
-                json={
+                {
                     "limit": 256,
                     "with_payload": True,
                     "with_vector": False,
@@ -115,7 +124,7 @@ class QdrantVectorStore:
                     },
                 },
             )
-            response.raise_for_status()
+        )
 
         points = response.json().get("result", {}).get("points", [])
         document_ids: list[str] = []
@@ -150,10 +159,10 @@ class QdrantVectorStore:
         for tag in tags or []:
             must_filters.append({"key": "tags", "match": {"value": tag}})
 
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=10.0) as client:
-            response = await client.post(
+        response = await self._run_qdrant_call(
+            lambda: self._post_json(
                 f"/collections/{self.collection_name}/points/query",
-                json={
+                {
                     "limit": limit,
                     "with_payload": True,
                     "with_vector": False,
@@ -168,7 +177,7 @@ class QdrantVectorStore:
                     },
                 },
             )
-            response.raise_for_status()
+        )
 
         points = response.json().get("result", {}).get("points", [])
         return [
@@ -206,10 +215,10 @@ class QdrantVectorStore:
         for tag in tags or []:
             must_filters.append({"key": "tags", "match": {"value": tag}})
 
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=10.0) as client:
-            response = await client.post(
+        response = await self._run_qdrant_call(
+            lambda: self._post_json(
                 f"/collections/{self.collection_name}/points/query",
-                json={
+                {
                     "limit": limit,
                     "with_payload": True,
                     "with_vector": False,
@@ -224,7 +233,7 @@ class QdrantVectorStore:
                     },
                 },
             )
-            response.raise_for_status()
+        )
 
         points = response.json().get("result", {}).get("points", [])
         return [
@@ -237,13 +246,108 @@ class QdrantVectorStore:
             if point.get("payload", {}).get("document_id")
         ]
 
+    async def find_semantic_duplicate(
+        self,
+        *,
+        query_vector: list[float],
+        tenant_id: str,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+        entity_id: str | None = None,
+        snapshot_date: str | None = None,
+        tags: list[str] | None = None,
+        acl: list[str] | None = None,
+        threshold: float = 0.97,
+    ) -> dict[str, object] | None:
+        must_filters = [{"key": "tenant_id", "match": {"value": tenant_id}}]
+        if scope_type is not None:
+            must_filters.append({"key": "scope_type", "match": {"value": scope_type}})
+        if scope_id is not None:
+            must_filters.append({"key": "scope_id", "match": {"value": scope_id}})
+        if entity_id is not None:
+            must_filters.append({"key": "entity_id", "match": {"value": entity_id}})
+        if snapshot_date is not None:
+            must_filters.append({"key": "snapshot_date", "match": {"value": snapshot_date}})
+        for tag in tags or []:
+            must_filters.append({"key": "tags", "match": {"value": tag}})
+
+        response = await self._run_qdrant_call(
+            lambda: self._post_json(
+                f"/collections/{self.collection_name}/points/query",
+                {
+                    "limit": 1,
+                    "score_threshold": threshold,
+                    "with_payload": True,
+                    "with_vector": False,
+                    "using": "dense",
+                    "query": query_vector,
+                    "filter": {
+                        "must": must_filters,
+                        **(
+                            {"should": [{"key": "acl", "match": {"value": value}} for value in acl]}
+                            if acl else {}
+                        ),
+                    },
+                },
+            )
+        )
+        points = response.json().get("result", {}).get("points", [])
+        if not points:
+            return None
+        point = points[0]
+        payload = point.get("payload", {})
+        document_id = payload.get("document_id")
+        chunk_id = payload.get("chunk_id")
+        if not document_id or not chunk_id:
+            return None
+        return {
+            "document_id": document_id,
+            "chunk_id": chunk_id,
+            "score": point.get("score", 0.0),
+        }
+
     async def delete_points(self, point_ids: list[str]) -> None:
         if not point_ids:
             return
 
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=10.0) as client:
-            response = await client.post(
+        await self._run_qdrant_call(
+            lambda: self._post_json(
                 f"/collections/{self.collection_name}/points/delete",
-                json={"points": point_ids},
+                {"points": point_ids},
             )
+        )
+
+    async def fetch_dense_vectors(self, point_ids: list[str]) -> dict[str, list[float]]:
+        if not point_ids:
+            return {}
+
+        response = await self._run_qdrant_call(
+            lambda: self._post_json(
+                f"/collections/{self.collection_name}/points",
+                {"ids": point_ids, "with_vector": True, "with_payload": False},
+            )
+        )
+        points = response.json().get("result", [])
+        vectors: dict[str, list[float]] = {}
+        for point in points:
+            dense = point.get("vector", {}).get("dense")
+            if dense is not None:
+                vectors[str(point["id"])] = list(dense)
+        return vectors
+
+    async def _post_json(self, path: str, payload: dict[str, object]):
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=10.0) as client:
+            response = await client.post(path, json=payload)
             response.raise_for_status()
+            return response
+
+    async def _run_qdrant_call(self, operation):
+        breaker = get_circuit_breaker("qdrant")
+        breaker.before_call()
+        try:
+            result = await operation()
+        except Exception:
+            breaker.record_failure()
+            raise
+        breaker.record_success()
+        return result

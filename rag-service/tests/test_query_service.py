@@ -1,8 +1,10 @@
-from uuid import UUID
+from types import SimpleNamespace
+from uuid import UUID, uuid4
 
 import pytest
 
 from app.repositories.ingestion import IngestionRepository
+from app.services.circuit_breaker import CircuitOpenError
 from app.services import query as query_module
 from app.services.query import QueryService
 
@@ -168,6 +170,8 @@ async def test_query_service_returns_empty_without_calling_llm(
 
     assert result["retrieval_mode"] == "empty"
     assert result["answer"] == "Bu proje icin sorgulanabilir indexed dokuman bulunamadi."
+    assert result["confidence_score"] is None
+    assert result["confidence_warning"] is None
     assert "query_embedding" not in result
 
 
@@ -220,6 +224,126 @@ async def test_query_service_falls_back_when_llm_generate_raises(
 
     assert "Revenue grew sharply in Q1" in result["answer"]
     assert result["sources"][0]["title"] == "Q1 Report"
+
+
+@pytest.mark.asyncio
+async def test_query_service_uses_fallback_answer_when_llm_breaker_open(
+    integration_session,
+    seeded_project,
+    monkeypatch,
+):
+    async def fake_embed_query_text(question: str):
+        return {
+            "task_type": "RETRIEVAL_QUERY",
+            "values": [0.1, 0.2],
+            "model": "gemini-embedding-2",
+            "dimension": 2,
+        }
+
+    def fake_build_query_answer_prompt(*, question: str, sources: list[dict[str, object]]) -> str:
+        return "PROMPT"
+
+    async def fake_generate(prompt: str) -> str:
+        raise CircuitOpenError("gemini_llm")
+
+    monkeypatch.setattr(query_module, "embed_query_text", fake_embed_query_text, raising=False)
+    monkeypatch.setattr(
+        query_module,
+        "build_query_answer_prompt",
+        fake_build_query_answer_prompt,
+        raising=False,
+    )
+    monkeypatch.setattr(query_module, "generate_text", fake_generate, raising=False)
+
+    repository = IngestionRepository(integration_session)
+    await repository.create_document(
+        project_id=seeded_project["project_id"],
+        tenant_id=seeded_project["tenant_id"],
+        source_type="web",
+        source_ref="https://example.com/q2-report",
+        status="indexed",
+        title="Q2 Report",
+        content_hash="hash-breaker-1",
+        metadata={
+            "content_text": "Expansion revenue improved in Q2 across enterprise accounts.",
+        },
+    )
+    await repository.commit()
+
+    service = QueryService(integration_session)
+    result = await service.answer_question("Expansion revenue?", seeded_project["project_id"])
+
+    assert "Expansion revenue improved in Q2" in result["answer"]
+    assert result["sources"][0]["title"] == "Q2 Report"
+
+
+@pytest.mark.asyncio
+async def test_query_service_emits_query_completed_event(
+    integration_session,
+    seeded_project,
+    monkeypatch,
+):
+    async def fake_embed_query_text(question: str):
+        return {
+            "task_type": "RETRIEVAL_QUERY",
+            "values": [0.1, 0.2],
+            "model": "gemini-embedding-2",
+            "dimension": 2,
+        }
+
+    events: list[tuple[str, dict[str, object]]] = []
+
+    def fake_build_query_answer_prompt(*, question: str, sources: list[dict[str, object]]) -> str:
+        return "PROMPT"
+
+    async def fake_generate(prompt: str) -> str:
+        return "Generated answer"
+
+    monkeypatch.setattr(query_module, "embed_query_text", fake_embed_query_text, raising=False)
+    monkeypatch.setattr(
+        query_module,
+        "build_query_answer_prompt",
+        fake_build_query_answer_prompt,
+        raising=False,
+    )
+    monkeypatch.setattr(query_module, "generate_text", fake_generate, raising=False)
+    monkeypatch.setattr(
+        query_module,
+        "emit_event",
+        lambda event, payload: events.append((event, payload)),
+        raising=False,
+    )
+
+    repository = IngestionRepository(integration_session)
+    await repository.create_document(
+        project_id=seeded_project["project_id"],
+        tenant_id=seeded_project["tenant_id"],
+        source_type="web",
+        source_ref="https://example.com/q1-report",
+        status="indexed",
+        title="Q1 Report",
+        content_hash="hash-log-1",
+        metadata={
+            "content_text": "Revenue grew sharply in Q1 due to subscription sales.",
+        },
+    )
+    await repository.commit()
+
+    service = QueryService(integration_session)
+    await service.answer_question("Revenue in Q1?", seeded_project["project_id"])
+
+    assert len(events) == 1
+    event_name, payload = events[0]
+    assert event_name == "query.completed"
+    assert payload["tenant_id"] == str(seeded_project["tenant_id"])
+    assert payload["project_id"] == str(seeded_project["project_id"])
+    assert payload["retrieval_mode"] == "metadata_fallback"
+    assert payload["source_count"] == 1
+    assert payload["top_chunk_score"] is None
+    assert isinstance(payload["query_hash"], str)
+    assert len(payload["query_hash"]) == 64
+    assert isinstance(payload["llm_ms"], int)
+    assert "question" not in payload
 
 
 @pytest.mark.asyncio
@@ -1359,6 +1483,277 @@ async def test_query_service_falls_back_when_reranker_fails(
 
 
 @pytest.mark.asyncio
+async def test_query_service_skips_rerank_when_breaker_open(
+    integration_session,
+    seeded_project,
+    monkeypatch,
+):
+    async def fake_embed_query_text(question: str):
+        return {
+            "task_type": "RETRIEVAL_QUERY",
+            "values": [0.31, 0.42],
+            "model": "gemini-embedding-2",
+            "dimension": 2,
+        }
+
+    class FakeVectorStore:
+        async def search_chunks(self, **kwargs):
+            return [{"document_id": str(document.id), "chunk_id": str(chunk.id), "score": 0.99}]
+
+        async def search_sparse_chunks(self, **kwargs):
+            return [{"document_id": str(document.id), "chunk_id": str(chunk.id), "score": 1.1}]
+
+    class BreakerOpenReranker:
+        async def rerank(self, *, query, documents, top_n):
+            raise CircuitOpenError("cohere_rerank")
+
+    monkeypatch.setattr(query_module, "embed_query_text", fake_embed_query_text, raising=False)
+
+    repository = IngestionRepository(integration_session)
+    document = await repository.create_document(
+        project_id=seeded_project["project_id"],
+        tenant_id=seeded_project["tenant_id"],
+        source_type="structured",
+        source_ref="inline://structured-records",
+        status="indexed",
+        title="Breaker Candidate",
+        content_hash="rerank-breaker",
+        metadata={"content_text": "renewal quote approved"},
+    )
+    chunks = await repository.create_chunks(
+        [
+            {
+                "document_id": document.id,
+                "chunk_index": 0,
+                "parent_chunk_id": None,
+                "content_hash": "breaker-parent",
+                "content": "parent",
+                "modality": "text",
+                "token_count": 1,
+                "page_number": None,
+                "bbox": None,
+                "section_title": "X",
+                "acl": [],
+                "embed_model": None,
+                "embed_version": None,
+                "dimension": 0,
+            },
+            {
+                "document_id": document.id,
+                "chunk_index": 1,
+                "parent_chunk_id": "__PARENT_INDEX__:0",
+                "content_hash": "breaker-child",
+                "content": "renewal quote approved",
+                "modality": "text",
+                "token_count": 3,
+                "page_number": None,
+                "bbox": None,
+                "section_title": "X",
+                "acl": [],
+                "embed_model": "gemini-embedding-2",
+                "embed_version": "v1",
+                "dimension": 768,
+            },
+        ]
+    )
+    chunk = chunks[1]
+    project = await integration_session.get(query_module.RagProject, seeded_project["project_id"])
+    project.config = {"use_reranker": True}
+    await integration_session.commit()
+
+    service = QueryService(
+        integration_session,
+        vector_store=FakeVectorStore(),
+        reranker=BreakerOpenReranker(),
+    )
+    result = await service.answer_question("renewal", seeded_project["project_id"])
+
+    assert result["retrieval_mode"] == "hybrid_rrf"
+    assert result["sources"][0]["chunk_id"] == str(chunk.id)
+
+
+def test_query_service_builds_confidence_score_from_source_scores():
+    service = QueryService.__new__(QueryService)
+
+    score, warning = service._build_confidence(
+        [
+            {"score": 0.8},
+            {"score": 0.6},
+        ]
+    )
+
+    assert score == pytest.approx(0.7, rel=1e-3)
+    assert warning is None
+
+
+def test_query_service_warns_when_confidence_is_low():
+    service = QueryService.__new__(QueryService)
+
+    score, warning = service._build_confidence(
+        [
+            {"score": 0.1},
+        ]
+    )
+
+    assert score == pytest.approx(0.1, rel=1e-3)
+    assert warning == "Bu yanit dusuk guvenle olusturuldu; kaynaklari kontrol edin."
+
+
+def test_query_service_normalizes_scores_above_one_for_confidence():
+    service = QueryService.__new__(QueryService)
+
+    score, warning = service._build_confidence(
+        [
+            {"score": 3.0},
+        ]
+    )
+
+    assert score == pytest.approx(0.75, rel=1e-3)
+    assert warning is None
+
+
+@pytest.mark.asyncio
+async def test_query_service_uses_expanded_query_for_retrieval(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeProject:
+        tenant_id = UUID("00000000-0000-0000-0000-000000000001")
+        config = {}
+
+    class FakeSession:
+        async def get(self, model, project_id):
+            return FakeProject()
+
+    class NoopCache:
+        def build_key(self, **kwargs):
+            return "noop"
+
+        async def get(self, key):
+            return None
+
+        async def set(self, **kwargs):
+            return None
+
+    class FakeExpansion:
+        async def expand(self, question: str, *, use_llm: bool = False):
+            return type(
+                "ExpandedQuery",
+                (),
+                {
+                    "original_question": question,
+                    "expanded_query": "invoice billing payment",
+                    "synonyms_applied": ["billing", "payment"],
+                    "rewrite_applied": False,
+                },
+            )()
+
+    async def fake_embed_query_text(question: str):
+        captured["embed_question"] = question
+        return {"values": [0.1, 0.2]}
+
+    async def fake_semantic_ranked_document_ids(self, project_id, **kwargs):
+        captured["semantic_vector"] = kwargs["query_vector"]
+        return [], [], {}
+
+    async def fake_sparse_ranked_document_ids(self, project_id, **kwargs):
+        captured["sparse_question"] = kwargs["question"]
+        return [], [], {}
+
+    async def fake_get_indexed_documents(self, *args, **kwargs):
+        return []
+
+    monkeypatch.setattr(query_module, "embed_query_text", fake_embed_query_text, raising=False)
+    monkeypatch.setattr(QueryService, "_semantic_ranked_document_ids", fake_semantic_ranked_document_ids)
+    monkeypatch.setattr(QueryService, "_sparse_ranked_document_ids", fake_sparse_ranked_document_ids)
+    monkeypatch.setattr(QueryService, "_get_indexed_documents", fake_get_indexed_documents)
+
+    service = QueryService(FakeSession(), query_cache=NoopCache())
+    service.query_expansion = FakeExpansion()
+
+    result = await service.answer_question("invoice", UUID("00000000-0000-0000-0000-000000000002"))
+
+    assert captured["embed_question"] == "invoice billing payment"
+    assert captured["sparse_question"] == "invoice billing payment"
+    assert result["retrieval_mode"] == "empty"
+
+
+@pytest.mark.asyncio
+async def test_query_service_uses_original_question_for_answer_prompt(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeProject:
+        tenant_id = UUID("00000000-0000-0000-0000-000000000001")
+        config = {}
+
+    class FakeDocument:
+        id = UUID("00000000-0000-0000-0000-000000000010")
+        title = "Doc"
+        source_ref = "inline://doc"
+        metadata_json = {"content_text": "invoice billing payment context"}
+
+    class FakeSession:
+        async def get(self, model, project_id):
+            return FakeProject()
+
+    class NoopCache:
+        def build_key(self, **kwargs):
+            return "noop"
+
+        async def get(self, key):
+            return None
+
+        async def set(self, **kwargs):
+            return None
+
+    class FakeExpansion:
+        async def expand(self, question: str, *, use_llm: bool = False):
+            return type(
+                "ExpandedQuery",
+                (),
+                {
+                    "original_question": question,
+                    "expanded_query": "invoice billing payment",
+                    "synonyms_applied": ["billing", "payment"],
+                    "rewrite_applied": False,
+                },
+            )()
+
+    async def fake_embed_query_text(question: str):
+        return {"values": [0.1, 0.2]}
+
+    async def fake_semantic_ranked_document_ids(self, project_id, **kwargs):
+        return None, None, {}
+
+    async def fake_sparse_ranked_document_ids(self, project_id, **kwargs):
+        return None, None, {}
+
+    async def fake_get_indexed_documents(self, *args, **kwargs):
+        return [FakeDocument()]
+
+    def fake_build_query_answer_prompt(*, question: str, sources: list[dict[str, object]]) -> str:
+        captured["prompt_question"] = question
+        return "PROMPT"
+
+    async def fake_generate(prompt: str) -> str:
+        return "answer"
+
+    monkeypatch.setattr(query_module, "embed_query_text", fake_embed_query_text, raising=False)
+    monkeypatch.setattr(QueryService, "_semantic_ranked_document_ids", fake_semantic_ranked_document_ids)
+    monkeypatch.setattr(QueryService, "_sparse_ranked_document_ids", fake_sparse_ranked_document_ids)
+    monkeypatch.setattr(QueryService, "_get_indexed_documents", fake_get_indexed_documents)
+    monkeypatch.setattr(query_module, "build_query_answer_prompt", fake_build_query_answer_prompt, raising=False)
+    monkeypatch.setattr(query_module, "generate_text", fake_generate, raising=False)
+
+    service = QueryService(FakeSession(), query_cache=NoopCache())
+    service.query_expansion = FakeExpansion()
+
+    result = await service.answer_question("invoice", UUID("00000000-0000-0000-0000-000000000002"))
+
+    assert captured["prompt_question"] == "invoice"
+    assert result["answer"] == "answer"
+
+
+@pytest.mark.asyncio
 async def test_query_service_applies_project_top_k_to_final_sources(
     integration_session,
     seeded_project,
@@ -2031,3 +2426,138 @@ async def test_query_service_returns_empty_mode_when_no_documents(
     assert result["retrieval_mode"] == "empty"
     assert result["sources"] == []
     assert result["retrieval_context"] == []
+
+
+@pytest.mark.asyncio
+async def test_query_service_updates_trace_metadata_with_query_hash_only(
+    monkeypatch,
+):
+    updates: list[dict[str, object]] = []
+    project_id = uuid4()
+    tenant_id = uuid4()
+
+    async def fake_embed_query_text(question: str):
+        return {
+            "task_type": "RETRIEVAL_QUERY",
+            "values": [0.1, 0.2],
+            "model": "gemini-embedding-2",
+            "dimension": 2,
+        }
+
+    class FakeSession:
+        async def get(self, model, key):
+            return SimpleNamespace(id=project_id, tenant_id=tenant_id, config={})
+
+    monkeypatch.setattr(query_module, "embed_query_text", fake_embed_query_text, raising=False)
+    monkeypatch.setattr(
+        query_module,
+        "update_current_observation",
+        lambda **kwargs: updates.append(kwargs),
+        raising=False,
+    )
+    async def fake_get_indexed_documents(self, *args, **kwargs):
+        return []
+
+    monkeypatch.setattr(QueryService, "_get_indexed_documents", fake_get_indexed_documents, raising=False)
+
+    service = QueryService(FakeSession())
+    await service.answer_question("Revenue in Q1?", project_id)
+
+    assert updates
+    metadata = updates[0]["metadata"]
+    assert metadata["project_id"] == str(project_id)
+    assert metadata["tenant_id"] == str(tenant_id)
+    assert "query_hash" in metadata
+    assert "question" not in metadata
+
+
+@pytest.mark.asyncio
+async def test_query_service_returns_cached_response_without_running_pipeline(monkeypatch):
+    cached = {
+        "answer": "cached",
+        "retrieval_mode": "hybrid_rrf",
+        "confidence_score": 0.9,
+        "confidence_warning": None,
+        "retrieval_context": [],
+        "sources": [],
+    }
+
+    class FakeSession:
+        async def get(self, model, key):
+            return SimpleNamespace(
+                id=UUID("00000000-0000-0000-0000-000000000002"),
+                tenant_id=UUID("00000000-0000-0000-0000-000000000001"),
+                config={},
+            )
+
+    class FakeCache:
+        async def get(self, cache_key):
+            return cached
+
+        def build_key(self, **kwargs):
+            return "query_cache:item:test"
+
+    async def fail_embed(question: str):
+        raise AssertionError("embed should not run on cache hit")
+
+    monkeypatch.setattr(query_module, "embed_query_text", fail_embed, raising=False)
+
+    service = QueryService(FakeSession(), query_cache=FakeCache())
+    result = await service.answer_question("Revenue in Q1?", UUID("00000000-0000-0000-0000-000000000002"))
+
+    assert result == cached
+
+
+@pytest.mark.asyncio
+async def test_query_service_stores_response_in_cache_on_miss(monkeypatch):
+    stored: list[tuple[str, str, dict[str, object]]] = []
+
+    class FakeSession:
+        async def get(self, model, key):
+            return SimpleNamespace(
+                id=UUID("00000000-0000-0000-0000-000000000002"),
+                tenant_id=UUID("00000000-0000-0000-0000-000000000001"),
+                config={},
+            )
+
+    class FakeCache:
+        async def get(self, cache_key):
+            return None
+
+        async def set(self, *, cache_key, project_id, value):
+            stored.append((cache_key, project_id, value))
+
+        def build_key(self, **kwargs):
+            return "query_cache:item:test"
+
+    async def fake_embed_query_text(question: str):
+        return {
+            "task_type": "RETRIEVAL_QUERY",
+            "values": [0.1, 0.2],
+            "model": "gemini-embedding-2",
+            "dimension": 2,
+        }
+
+    monkeypatch.setattr(query_module, "embed_query_text", fake_embed_query_text, raising=False)
+    async def fake_semantic_ranked_document_ids(*args, **kwargs):
+        return (None, None, {})
+
+    monkeypatch.setattr(
+        QueryService,
+        "_semantic_ranked_document_ids",
+        fake_semantic_ranked_document_ids,
+        raising=False,
+    )
+
+    async def fake_get_indexed_documents(self, *args, **kwargs):
+        return []
+
+    monkeypatch.setattr(QueryService, "_get_indexed_documents", fake_get_indexed_documents, raising=False)
+
+    service = QueryService(FakeSession(), query_cache=FakeCache())
+    result = await service.answer_question("Revenue in Q1?", UUID("00000000-0000-0000-0000-000000000002"))
+
+    assert result["retrieval_mode"] == "empty"
+    assert stored[0][0] == "query_cache:item:test"
+    assert stored[0][1] == "00000000-0000-0000-0000-000000000002"
+    assert stored[0][2]["retrieval_mode"] == "empty"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 
 def build_chunks(
     source_type: str,
@@ -68,7 +70,12 @@ def _filter_and_split(
                 fallback_chunk["bbox"] = raw_chunk["bbox"]
 
         tokens = normalized.split()
-        if len(tokens) <= max_tokens and len(tokens) >= min_tokens:
+        adaptive_max_tokens = _adaptive_max_tokens(
+            normalized,
+            min_tokens=min_tokens,
+            max_tokens=max_tokens,
+        )
+        if len(tokens) <= adaptive_max_tokens and len(tokens) >= min_tokens:
             chunk = {
                 "content": original,
                 "page_number": raw_chunk.get("page_number"),
@@ -78,8 +85,8 @@ def _filter_and_split(
             chunks.append(chunk)
             continue
 
-        for start in range(0, len(tokens), max_tokens):
-            part_tokens = tokens[start : start + max_tokens]
+        for start in range(0, len(tokens), adaptive_max_tokens):
+            part_tokens = tokens[start : start + adaptive_max_tokens]
             if len(part_tokens) < min_tokens:
                 continue
             chunk = {
@@ -94,3 +101,22 @@ def _filter_and_split(
         return [fallback_chunk]
 
     return chunks
+
+
+def _adaptive_max_tokens(
+    normalized_content: str,
+    *,
+    min_tokens: int,
+    max_tokens: int,
+) -> int:
+    punctuation_count = sum(1 for char in normalized_content if char in ":;,-[]{}|")
+    token_count = max(1, len(normalized_content.split()))
+    punctuation_ratio = punctuation_count / token_count
+    sentence_count = max(1, normalized_content.count(".") + normalized_content.count("!") + normalized_content.count("?"))
+    average_sentence_tokens = token_count / sentence_count
+    list_marker_count = len(re.findall(r"\b[\w-]+:\s", normalized_content))
+
+    if punctuation_ratio >= 0.08 or average_sentence_tokens <= 8 or list_marker_count >= 2:
+        return max(min_tokens, max_tokens // 2)
+
+    return max_tokens

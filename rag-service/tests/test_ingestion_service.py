@@ -1,8 +1,10 @@
 import pytest
 from uuid import UUID
 from fastapi import HTTPException
+from types import SimpleNamespace
 
 from app.models.db import RagChunk
+from app.config import get_settings
 from app.schemas.ingest import IngestRequest
 from app.services import ingestion as ingestion_service_module
 from app.services import loaders as loaders_module
@@ -20,12 +22,20 @@ class FakeDispatcher:
 class FakeVectorStore:
     def __init__(self) -> None:
         self.deleted_point_ids: list[str] = []
+        self.collection_ready = False
 
     async def ensure_collection(self) -> None:
-        return None
+        self.collection_ready = True
+
+    async def fetch_dense_vectors(self, point_ids: list[str]) -> dict[str, list[float]]:
+        return {}
 
     async def upsert_chunks(self, chunks: list[dict[str, object]]) -> list[str]:
         return [f"00000000-0000-0000-0000-{index + 1:012d}" for index, _ in enumerate(chunks)]
+
+    async def find_semantic_duplicate(self, **kwargs):
+        assert self.collection_ready is True
+        return None
 
     async def delete_points(self, point_ids: list[str]) -> None:
         self.deleted_point_ids.extend(point_ids)
@@ -145,6 +155,8 @@ async def test_sync_web_ingestion_stores_loaded_metadata(
     seeded_project,
     monkeypatch,
 ):
+    events: list[tuple[str, dict[str, object]]] = []
+
     async def fake_load(source_type, source_ref):
         assert source_type == "web"
         assert source_ref == "https://example.com/article"
@@ -167,6 +179,12 @@ async def test_sync_web_ingestion_stores_loaded_metadata(
         ingestion_service_module,
         "embed_text_content",
         fake_embed_text,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        ingestion_service_module,
+        "emit_event",
+        lambda event, payload: events.append((event, payload)),
         raising=False,
     )
 
@@ -192,6 +210,94 @@ async def test_sync_web_ingestion_stores_loaded_metadata(
         "content_length": 20,
         "loader_strategy": "crawl4ai_rendered",
     }
+    assert len(events) == 1
+    event_name, payload = events[0]
+    assert event_name == "ingestion.chunk_indexed"
+    assert payload["tenant_id"] == str(seeded_project["tenant_id"])
+    assert payload["project_id"] == str(seeded_project["project_id"])
+    assert payload["document_id"] == result["document_id"]
+    assert payload["chunk_index"] == 0
+    assert payload["modality"] == "text"
+    assert payload["vector_dimension"] == 3
+    assert payload["token_count"] == len("Example article body") // 4
+    assert isinstance(payload["embed_ms"], int)
+
+
+@pytest.mark.asyncio
+async def test_sync_ingest_marks_document_and_job_failed_when_processing_raises(monkeypatch):
+    project_id = UUID("22222222-2222-2222-2222-222222222222")
+    tenant_id = UUID("11111111-1111-1111-1111-111111111111")
+    document = SimpleNamespace(
+        id=UUID("33333333-3333-3333-3333-333333333333"),
+        project_id=project_id,
+        tenant_id=tenant_id,
+        status="indexing",
+        source_type="web",
+        source_ref="https://example.com/article",
+        previous_document_id=None,
+        metadata_json={},
+    )
+    job = SimpleNamespace(
+        id=UUID("44444444-4444-4444-4444-444444444444"),
+        document_id=document.id,
+        status="running",
+        error_message=None,
+    )
+    updated: dict[str, object] = {}
+
+    class FakeRepository:
+        async def get_project(self, raw_project_id):
+            return SimpleNamespace(id=project_id, tenant_id=tenant_id, config={})
+
+        async def get_latest_document_by_source_ref(self, raw_project_id, source_ref):
+            return None
+
+        async def create_document(self, **kwargs):
+            return document
+
+        async def create_job(self, **kwargs):
+            return job
+
+        async def update_document_status(self, target_document, status):
+            updated["document_status"] = status
+            target_document.status = status
+
+        async def update_job_status(self, target_job, status, **kwargs):
+            updated["job_status"] = status
+            updated["error_message"] = kwargs.get("error_message")
+            target_job.status = status
+            target_job.error_message = kwargs.get("error_message")
+
+        async def commit(self):
+            updated["committed"] = True
+
+    service = IngestionService(session=None, vector_store=FakeVectorStore())
+    service.repository = FakeRepository()
+
+    async def fake_process(target_document, target_job, retry_count=0):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(service, "_process_document_job", fake_process)
+
+    with pytest.raises(RuntimeError):
+        await service.create_ingestion_job(
+            IngestRequest(
+                source_type="web",
+                source_ref="https://example.com/article",
+                mode="sync",
+            ),
+            project_id,
+        )
+
+    assert updated == {
+        "document_status": "failed",
+        "job_status": "failed",
+        "error_message": "boom",
+        "committed": True,
+    }
+    assert document.status == "failed"
+    assert job.status == "failed"
+    assert job.error_message == "boom"
 
 
 @pytest.mark.asyncio
@@ -804,3 +910,889 @@ async def test_create_chunks_persists_chunk_content(integration_session, seeded_
     persisted_chunk = await integration_session.get(RagChunk, chunks[0].id)
     assert persisted_chunk is not None
     assert persisted_chunk.content == "Chunk level content for retrieval snippets."
+
+
+@pytest.mark.asyncio
+async def test_create_ingestion_job_updates_trace_metadata(
+    monkeypatch,
+):
+    updates: list[dict[str, object]] = []
+    project_id = UUID("00000000-0000-0000-0000-000000000111")
+    tenant_id = UUID("00000000-0000-0000-0000-000000000222")
+    document_id = UUID("00000000-0000-0000-0000-000000000333")
+    job_id = UUID("00000000-0000-0000-0000-000000000444")
+
+    monkeypatch.setattr(
+        ingestion_service_module,
+        "update_current_observation",
+        lambda **kwargs: updates.append(kwargs),
+        raising=False,
+    )
+
+    service = IngestionService(None, dispatcher=FakeDispatcher())  # type: ignore[arg-type]
+    service.repository = SimpleNamespace(
+        get_project=lambda value: None,
+        create_document=lambda **kwargs: None,
+        create_job=lambda **kwargs: None,
+        commit=lambda: None,
+    )
+
+    async def fake_get_project(value):
+        return SimpleNamespace(id=project_id, tenant_id=tenant_id)
+
+    async def fake_create_document(**kwargs):
+        return SimpleNamespace(id=document_id)
+
+    async def fake_create_job(**kwargs):
+        return SimpleNamespace(id=job_id, status="pending")
+
+    async def fake_commit():
+        return None
+
+    async def fake_get_latest_document_by_source_ref(project_id_value, source_ref):
+        return None
+
+    service.repository = SimpleNamespace(
+        get_project=fake_get_project,
+        get_latest_document_by_source_ref=fake_get_latest_document_by_source_ref,
+        create_document=fake_create_document,
+        create_job=fake_create_job,
+        commit=fake_commit,
+    )
+    result = await service.create_ingestion_job(
+        IngestRequest(
+            source_type="web",
+            source_ref="https://example.com/article",
+            mode="async",
+        ),
+        project_id,
+    )
+
+    assert updates
+    metadata = updates[-1]["metadata"]
+    assert metadata["project_id"] == str(project_id)
+    assert metadata["document_id"] == result["document_id"]
+    assert metadata["source_type"] == "web"
+    assert "source_ref" not in metadata
+
+
+@pytest.mark.asyncio
+async def test_create_ingestion_job_invalidates_query_cache_after_sync_success(
+    monkeypatch,
+):
+    invalidated: list[str] = []
+    project_id = UUID("00000000-0000-0000-0000-000000000111")
+    tenant_id = UUID("00000000-0000-0000-0000-000000000222")
+    document_id = UUID("00000000-0000-0000-0000-000000000333")
+    job_id = UUID("00000000-0000-0000-0000-000000000444")
+
+    class FakeCache:
+        async def invalidate_project(self, project_id: str):
+            invalidated.append(project_id)
+
+    service = IngestionService(
+        None,  # type: ignore[arg-type]
+        vector_store=FakeVectorStore(),
+        query_cache=FakeCache(),
+    )
+    service.repository = SimpleNamespace(
+        get_project=lambda value: None,
+        create_document=lambda **kwargs: None,
+        create_job=lambda **kwargs: None,
+        commit=lambda: None,
+    )
+
+    async def fake_get_project(value):
+        return SimpleNamespace(id=project_id, tenant_id=tenant_id)
+
+    async def fake_create_document(**kwargs):
+        return SimpleNamespace(id=document_id, project_id=project_id, tenant_id=tenant_id, metadata_json={})
+
+    async def fake_create_job(**kwargs):
+        return SimpleNamespace(id=job_id, status="completed")
+
+    async def fake_commit():
+        return None
+
+    async def fake_process_document_job(document, job, *, retry_count):
+        await service.query_cache.invalidate_project(str(document.project_id))
+
+    async def fake_get_latest_document_by_source_ref(project_id_value, source_ref):
+        return None
+
+    service.repository = SimpleNamespace(
+        get_project=fake_get_project,
+        get_latest_document_by_source_ref=fake_get_latest_document_by_source_ref,
+        create_document=fake_create_document,
+        create_job=fake_create_job,
+        commit=fake_commit,
+    )
+    monkeypatch.setattr(service, "_process_document_job", fake_process_document_job, raising=False)
+
+    await service.create_ingestion_job(
+        IngestRequest(
+            source_type="web",
+            source_ref="https://example.com/article",
+            mode="sync",
+        ),
+        project_id,
+    )
+
+    assert invalidated == [str(project_id)]
+
+
+@pytest.mark.asyncio
+async def test_delete_ingestion_job_invalidates_query_cache(
+):
+    invalidated: list[str] = []
+    project_id = UUID("00000000-0000-0000-0000-000000000111")
+    tenant_id = UUID("00000000-0000-0000-0000-000000000222")
+    document_id = UUID("00000000-0000-0000-0000-000000000333")
+    job_id = UUID("00000000-0000-0000-0000-000000000444")
+    chunk_id = UUID("00000000-0000-0000-0000-000000000555")
+
+    class FakeCache:
+        async def invalidate_project(self, project_id: str):
+            invalidated.append(project_id)
+
+    vector_store = FakeVectorStore()
+    service = IngestionService(None, vector_store=vector_store, query_cache=FakeCache())  # type: ignore[arg-type]
+    document = SimpleNamespace(
+        id=document_id,
+        project_id=project_id,
+        tenant_id=tenant_id,
+        status="indexed",
+    )
+    job = SimpleNamespace(id=job_id, document_id=document_id)
+    chunk = SimpleNamespace(
+        id=chunk_id,
+        qdrant_point_id=UUID("00000000-0000-0000-0000-000000000123"),
+    )
+
+    async def fake_get_job(value):
+        return job
+
+    async def fake_get_document(value):
+        return document
+
+    async def fake_get_document_chunks(value):
+        return [chunk]
+
+    async def fake_soft_delete_document(target):
+        target.status = "deleted"
+
+    async def fake_archive_chunks(chunks):
+        return None
+
+    async def fake_commit():
+        return None
+
+    service.repository = SimpleNamespace(
+        get_job=fake_get_job,
+        get_document=fake_get_document,
+        get_document_chunks=fake_get_document_chunks,
+        soft_delete_document=fake_soft_delete_document,
+        archive_chunks=fake_archive_chunks,
+        commit=fake_commit,
+    )
+
+    await service.delete_ingestion_job(str(job_id))
+
+    assert invalidated == [str(project_id)]
+
+
+@pytest.mark.asyncio
+async def test_create_ingestion_job_increments_document_version(monkeypatch):
+    project_id = UUID("00000000-0000-0000-0000-000000000111")
+    tenant_id = UUID("00000000-0000-0000-0000-000000000222")
+    previous_document_id = UUID("00000000-0000-0000-0000-000000000333")
+    new_document_id = UUID("00000000-0000-0000-0000-000000000444")
+    job_id = UUID("00000000-0000-0000-0000-000000000555")
+    captured_create: dict[str, object] = {}
+
+    service = IngestionService(None, dispatcher=FakeDispatcher())  # type: ignore[arg-type]
+
+    async def fake_get_project(value):
+        return SimpleNamespace(id=project_id, tenant_id=tenant_id)
+
+    async def fake_get_latest_document_by_source_ref(project_id_value, source_ref):
+        return SimpleNamespace(id=previous_document_id, version=2)
+
+    async def fake_create_document(**kwargs):
+        captured_create.update(kwargs)
+        return SimpleNamespace(id=new_document_id)
+
+    async def fake_create_job(**kwargs):
+        return SimpleNamespace(id=job_id, status="pending")
+
+    async def fake_commit():
+        return None
+
+    service.repository = SimpleNamespace(
+        get_project=fake_get_project,
+        get_latest_document_by_source_ref=fake_get_latest_document_by_source_ref,
+        create_document=fake_create_document,
+        create_job=fake_create_job,
+        commit=fake_commit,
+    )
+
+    result = await service.create_ingestion_job(
+        IngestRequest(
+            source_type="web",
+            source_ref="https://example.com/article",
+            mode="async",
+        ),
+        project_id,
+    )
+
+    assert result["document_id"] == str(new_document_id)
+    assert captured_create["version"] == 3
+    assert captured_create["previous_document_id"] == previous_document_id
+
+
+@pytest.mark.asyncio
+async def test_process_document_job_supersedes_previous_version(monkeypatch):
+    project_id = UUID("00000000-0000-0000-0000-000000000111")
+    tenant_id = UUID("00000000-0000-0000-0000-000000000222")
+    previous_document_id = UUID("00000000-0000-0000-0000-000000000333")
+    current_document_id = UUID("00000000-0000-0000-0000-000000000444")
+    archived_ids: list[str] = []
+    deleted_point_ids: list[str] = []
+    superseded_ids: list[str] = []
+
+    async def fake_load(source_type, source_ref):
+        return {
+            "content": "Example article body",
+            "metadata": {"title": "Example Article", "loader_strategy": "crawl4ai_rendered"},
+            "chunk_count": 1,
+        }
+
+    async def fake_embed_text(content, title):
+        return {"values": [0.1, 0.2, 0.3], "model": "gemini-test", "dimension": 3}
+
+    monkeypatch.setattr(ingestion_service_module, "load_source", fake_load, raising=False)
+    monkeypatch.setattr(ingestion_service_module, "embed_text_content", fake_embed_text, raising=False)
+
+    service = IngestionService(None, vector_store=FakeVectorStore())  # type: ignore[arg-type]
+    previous_document = SimpleNamespace(id=previous_document_id, project_id=project_id)
+    previous_chunk = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000997"),
+        qdrant_point_id=UUID("00000000-0000-0000-0000-000000000999"),
+        parent_chunk_id=UUID("00000000-0000-0000-0000-000000000998"),
+        modality="text",
+        content_hash="old-hash",
+        embed_model="gemini-old",
+        embed_version="v1",
+        dimension=3,
+    )
+
+    async def fake_update_document_status(document, status):
+        document.status = status
+        return document
+
+    async def fake_update_job_status(*args, **kwargs):
+        return None
+
+    async def fake_commit():
+        return None
+
+    async def fake_create_chunks(rows):
+        return [
+            SimpleNamespace(id=UUID("00000000-0000-0000-0000-000000000701"), modality="text", acl=[], page_number=None, qdrant_point_id=None),
+            SimpleNamespace(id=UUID("00000000-0000-0000-0000-000000000702"), modality="text", acl=[], page_number=None, qdrant_point_id=None),
+        ]
+
+    async def fake_attach_qdrant_point_ids(chunks, point_ids):
+        return chunks
+
+    async def fake_update_document_after_load(*args, **kwargs):
+        return None
+
+    async def fake_get_document(document_id):
+        if document_id == previous_document_id:
+            return previous_document
+        return None
+
+    async def fake_get_document_chunks(document_id):
+        if document_id == previous_document_id:
+            return [previous_chunk]
+        return []
+
+    async def fake_archive_chunks(chunks):
+        archived_ids.extend(str(chunk.qdrant_point_id) for chunk in chunks if chunk.qdrant_point_id)
+        return chunks
+
+    async def fake_supersede_document(document):
+        superseded_ids.append(str(document.id))
+        return document
+
+    async def fake_create_chunk_diff_logs(job_id, entries):
+        return entries
+
+    async def fake_delete_points(point_ids):
+        deleted_point_ids.extend(point_ids)
+
+    service.vector_store.delete_points = fake_delete_points  # type: ignore[method-assign]
+    service.repository = SimpleNamespace(
+        update_document_status=fake_update_document_status,
+        update_job_status=fake_update_job_status,
+        commit=fake_commit,
+        create_chunks=fake_create_chunks,
+        attach_qdrant_point_ids=fake_attach_qdrant_point_ids,
+        update_document_after_load=fake_update_document_after_load,
+        get_document=fake_get_document,
+        get_document_chunks=fake_get_document_chunks,
+        archive_chunks=fake_archive_chunks,
+        supersede_document=fake_supersede_document,
+        create_chunk_diff_logs=fake_create_chunk_diff_logs,
+    )
+
+    document = SimpleNamespace(
+        id=current_document_id,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        source_type="web",
+        source_ref="https://example.com/article",
+        title="article",
+        metadata_json={},
+        previous_document_id=previous_document_id,
+    )
+    job = SimpleNamespace(id=UUID("00000000-0000-0000-0000-000000000888"))
+
+    await service._process_document_job(document, job, retry_count=0)
+
+    assert superseded_ids == [str(previous_document_id)]
+    assert archived_ids == ["00000000-0000-0000-0000-000000000999"]
+    assert deleted_point_ids == ["00000000-0000-0000-0000-000000000999"]
+
+
+@pytest.mark.asyncio
+async def test_process_document_job_reuses_unchanged_chunk_vectors_and_writes_diff_logs(monkeypatch):
+    project_id = UUID("00000000-0000-0000-0000-000000000111")
+    tenant_id = UUID("00000000-0000-0000-0000-000000000222")
+    previous_document_id = UUID("00000000-0000-0000-0000-000000000333")
+    current_document_id = UUID("00000000-0000-0000-0000-000000000444")
+    embed_calls: list[str] = []
+    diff_logs: list[dict[str, object]] = []
+    upsert_rows: list[dict[str, object]] = []
+
+    unchanged_text = "same body"
+    changed_text = "new body"
+
+    async def fake_load(source_type, source_ref):
+        return {
+            "content": f"{unchanged_text}\n{changed_text}",
+            "metadata": {"title": "Example Article", "loader_strategy": "crawl4ai_rendered"},
+            "chunk_count": 2,
+        }
+
+    async def fake_embed_text(content, title):
+        embed_calls.append(content)
+        return {"values": [0.9, 0.8], "model": "gemini-test", "dimension": 2}
+
+    monkeypatch.setattr(ingestion_service_module, "load_source", fake_load, raising=False)
+    monkeypatch.setattr(ingestion_service_module, "embed_text_content", fake_embed_text, raising=False)
+    monkeypatch.setattr(
+        ingestion_service_module,
+        "build_chunks",
+        lambda source_type, content, metadata: [
+            {"content": unchanged_text},
+            {"content": changed_text},
+        ],
+        raising=False,
+    )
+
+    class DiffVectorStore(FakeVectorStore):
+        async def fetch_dense_vectors(self, point_ids: list[str]) -> dict[str, list[float]]:
+            return {"00000000-0000-0000-0000-00000000aaaa": [0.1, 0.2]}
+
+        async def upsert_chunks(self, chunks: list[dict[str, object]]) -> list[str]:
+            upsert_rows.extend(chunks)
+            return [f"00000000-0000-0000-0000-{index + 1:012d}" for index, _ in enumerate(chunks)]
+
+    service = IngestionService(None, vector_store=DiffVectorStore())  # type: ignore[arg-type]
+    previous_child = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000551"),
+        parent_chunk_id=UUID("00000000-0000-0000-0000-000000000550"),
+        modality="text",
+        content_hash=service._content_hash(unchanged_text),
+        content=unchanged_text,
+        qdrant_point_id=UUID("00000000-0000-0000-0000-00000000aaaa"),
+        embed_model="gemini-old",
+        embed_version="v1",
+        dimension=2,
+    )
+    deleted_previous_child = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000661"),
+        parent_chunk_id=UUID("00000000-0000-0000-0000-000000000660"),
+        modality="text",
+        content_hash=service._content_hash("deleted body"),
+        content="deleted body",
+        qdrant_point_id=UUID("00000000-0000-0000-0000-00000000bbbb"),
+        embed_model="gemini-old",
+        embed_version="v1",
+        dimension=2,
+    )
+
+    created_chunks = [
+        SimpleNamespace(id=UUID("00000000-0000-0000-0000-000000000701"), modality="text", acl=[], page_number=None, qdrant_point_id=None),
+        SimpleNamespace(id=UUID("00000000-0000-0000-0000-000000000702"), modality="text", acl=[], page_number=None, qdrant_point_id=None),
+        SimpleNamespace(id=UUID("00000000-0000-0000-0000-000000000703"), modality="text", acl=[], page_number=None, qdrant_point_id=None),
+        SimpleNamespace(id=UUID("00000000-0000-0000-0000-000000000704"), modality="text", acl=[], page_number=None, qdrant_point_id=None),
+    ]
+
+    async def fake_update_document_status(document, status):
+        document.status = status
+        return document
+
+    async def fake_update_job_status(*args, **kwargs):
+        return None
+
+    async def fake_commit():
+        return None
+
+    async def fake_create_chunks(rows):
+        return created_chunks
+
+    async def fake_attach_qdrant_point_ids(chunks, point_ids):
+        return chunks
+
+    async def fake_update_document_after_load(*args, **kwargs):
+        return None
+
+    async def fake_get_document(document_id):
+        if document_id == previous_document_id:
+            return SimpleNamespace(id=previous_document_id, project_id=project_id)
+        return None
+
+    async def fake_get_document_chunks(document_id):
+        if document_id == previous_document_id:
+            return [previous_child, deleted_previous_child]
+        return []
+
+    async def fake_archive_chunks(chunks):
+        return chunks
+
+    async def fake_supersede_document(document):
+        return document
+
+    async def fake_create_chunk_diff_logs(job_id, entries):
+        diff_logs.extend(entries)
+        return entries
+
+    async def fake_delete_points(point_ids):
+        return None
+
+    service.vector_store.delete_points = fake_delete_points  # type: ignore[method-assign]
+    service.repository = SimpleNamespace(
+        update_document_status=fake_update_document_status,
+        update_job_status=fake_update_job_status,
+        commit=fake_commit,
+        create_chunks=fake_create_chunks,
+        attach_qdrant_point_ids=fake_attach_qdrant_point_ids,
+        update_document_after_load=fake_update_document_after_load,
+        get_document=fake_get_document,
+        get_document_chunks=fake_get_document_chunks,
+        archive_chunks=fake_archive_chunks,
+        supersede_document=fake_supersede_document,
+        create_chunk_diff_logs=fake_create_chunk_diff_logs,
+    )
+
+    document = SimpleNamespace(
+        id=current_document_id,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        source_type="web",
+        source_ref="https://example.com/article",
+        title="article",
+        metadata_json={},
+        previous_document_id=previous_document_id,
+    )
+    job = SimpleNamespace(id=UUID("00000000-0000-0000-0000-000000000888"))
+
+    await service._process_document_job(document, job, retry_count=0)
+
+    assert embed_calls == [changed_text]
+    assert upsert_rows[0]["vector"] == [0.1, 0.2]
+    assert upsert_rows[1]["vector"] == [0.9, 0.8]
+    assert {entry["operation"] for entry in diff_logs} == {"unchanged", "modified", "deleted"}
+
+
+@pytest.mark.asyncio
+async def test_create_ingestion_job_persists_source_connector_id(monkeypatch):
+    project_id = UUID("00000000-0000-0000-0000-000000000111")
+    tenant_id = UUID("00000000-0000-0000-0000-000000000222")
+    connector_id = UUID("00000000-0000-0000-0000-000000000333")
+    captured_create: dict[str, object] = {}
+
+    service = IngestionService(None, dispatcher=FakeDispatcher())  # type: ignore[arg-type]
+
+    async def fake_get_project(value):
+        return SimpleNamespace(id=project_id, tenant_id=tenant_id)
+
+    async def fake_get_latest_document_by_source_ref(project_id_value, source_ref):
+        return None
+
+    async def fake_create_document(**kwargs):
+        captured_create.update(kwargs)
+        return SimpleNamespace(id=UUID("00000000-0000-0000-0000-000000000444"))
+
+    async def fake_create_job(**kwargs):
+        return SimpleNamespace(id=UUID("00000000-0000-0000-0000-000000000555"), status="pending")
+
+    async def fake_commit():
+        return None
+
+    service.repository = SimpleNamespace(
+        get_project=fake_get_project,
+        get_latest_document_by_source_ref=fake_get_latest_document_by_source_ref,
+        create_document=fake_create_document,
+        create_job=fake_create_job,
+        commit=fake_commit,
+    )
+
+    await service.create_ingestion_job(
+        IngestRequest(
+            source_type="web",
+            source_ref="https://example.com/article",
+            source_connector_id=str(connector_id),
+            cursor_state={"cursor": "abc"},
+            mode="async",
+        ),
+        project_id,
+    )
+
+    assert captured_create["source_connector_id"] == connector_id
+    assert captured_create["metadata"]["cursor_state"] == {"cursor": "abc"}
+
+
+@pytest.mark.asyncio
+async def test_process_document_job_upserts_sync_checkpoint(monkeypatch):
+    project_id = UUID("00000000-0000-0000-0000-000000000111")
+    tenant_id = UUID("00000000-0000-0000-0000-000000000222")
+    connector_id = UUID("00000000-0000-0000-0000-000000000333")
+    checkpoint_calls: list[tuple[UUID, dict[str, object]]] = []
+
+    async def fake_load(source_type, source_ref):
+        return {
+            "content": "Example article body",
+            "metadata": {"title": "Example Article", "loader_strategy": "crawl4ai_rendered"},
+            "chunk_count": 1,
+        }
+
+    async def fake_embed_text(content, title):
+        return {"values": [0.1, 0.2, 0.3], "model": "gemini-test", "dimension": 3}
+
+    monkeypatch.setattr(ingestion_service_module, "load_source", fake_load, raising=False)
+    monkeypatch.setattr(ingestion_service_module, "embed_text_content", fake_embed_text, raising=False)
+
+    service = IngestionService(None, vector_store=FakeVectorStore())  # type: ignore[arg-type]
+
+    async def fake_update_document_status(document, status):
+        document.status = status
+        return document
+
+    async def fake_update_job_status(*args, **kwargs):
+        return None
+
+    async def fake_commit():
+        return None
+
+    async def fake_create_chunks(rows):
+        return [
+            SimpleNamespace(id=UUID("00000000-0000-0000-0000-000000000701"), modality="text", acl=[], page_number=None, qdrant_point_id=None),
+            SimpleNamespace(id=UUID("00000000-0000-0000-0000-000000000702"), modality="text", acl=[], page_number=None, qdrant_point_id=None),
+        ]
+
+    async def fake_attach_qdrant_point_ids(chunks, point_ids):
+        return chunks
+
+    async def fake_update_document_after_load(*args, **kwargs):
+        return None
+
+    async def fake_create_chunk_diff_logs(job_id, entries):
+        return entries
+
+    async def fake_upsert_sync_checkpoint(source_connector_id, cursor_state):
+        checkpoint_calls.append((source_connector_id, cursor_state))
+        return None
+
+    service.repository = SimpleNamespace(
+        update_document_status=fake_update_document_status,
+        update_job_status=fake_update_job_status,
+        commit=fake_commit,
+        create_chunks=fake_create_chunks,
+        attach_qdrant_point_ids=fake_attach_qdrant_point_ids,
+        update_document_after_load=fake_update_document_after_load,
+        create_chunk_diff_logs=fake_create_chunk_diff_logs,
+        get_document=lambda document_id: None,
+        get_document_chunks=lambda document_id: [],
+        archive_chunks=lambda chunks: chunks,
+        supersede_document=lambda document: document,
+        upsert_sync_checkpoint=fake_upsert_sync_checkpoint,
+    )
+
+    document = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000444"),
+        tenant_id=tenant_id,
+        project_id=project_id,
+        source_type="web",
+        source_ref="https://example.com/article",
+        title="article",
+        metadata_json={"cursor_state": {"cursor": "abc"}},
+        source_connector_id=connector_id,
+        previous_document_id=None,
+        content_hash="hash-before-update",
+    )
+    job = SimpleNamespace(id=UUID("00000000-0000-0000-0000-000000000888"))
+
+    await service._process_document_job(document, job, retry_count=0)
+
+    assert checkpoint_calls == [
+        (
+            connector_id,
+            {
+                "cursor": "abc",
+                "document_id": "00000000-0000-0000-0000-000000000444",
+                "source_ref": "https://example.com/article",
+                "content_hash": service._content_hash("Example article body"),
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_requeue_stale_documents_enqueues_latest_indexed_document(
+    integration_session,
+    seeded_project,
+):
+    dispatcher = FakeDispatcher()
+    service = IngestionService(integration_session, dispatcher=dispatcher, vector_store=FakeVectorStore())
+    repository = service.repository
+
+    document = await repository.create_document(
+        project_id=seeded_project["project_id"],
+        tenant_id=seeded_project["tenant_id"],
+        source_type="web",
+        source_ref="https://example.com/stale",
+        status="indexed",
+        title="Stale Doc",
+        content_hash=service._content_hash("https://example.com/stale"),
+        metadata={},
+        version=1,
+    )
+    await repository.create_chunks(
+        [
+            {
+                "document_id": document.id,
+                "chunk_index": 0,
+                "parent_chunk_id": None,
+                "modality": "text",
+                "content": "Parent",
+                "content_hash": service._content_hash("Parent"),
+                "token_count": 1,
+                "section_title": "Stale Doc",
+                "acl": [],
+                "embed_model": None,
+                "embed_version": None,
+                "dimension": 0,
+            },
+            {
+                "document_id": document.id,
+                "chunk_index": 1,
+                "parent_chunk_id": "__PARENT_INDEX__:0",
+                "modality": "text",
+                "content": "Child chunk",
+                "content_hash": service._content_hash("Child chunk"),
+                "token_count": 2,
+                "section_title": "Stale Doc",
+                "acl": [],
+                "embed_model": "gemini-old",
+                "embed_version": "gemini-old-768",
+                "dimension": 3,
+            },
+        ]
+    )
+    await repository.commit()
+
+    result = await service.requeue_stale_documents()
+
+    assert result == {"stale_document_count": 1}
+    assert len(dispatcher.enqueued) == 1
+    latest_document = await repository.get_latest_document_by_source_ref(
+        seeded_project["project_id"],
+        "https://example.com/stale",
+    )
+    assert latest_document is not None
+    assert latest_document.version == 2
+    assert latest_document.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_requeue_stale_documents_skips_current_embed_version(
+    integration_session,
+    seeded_project,
+):
+    dispatcher = FakeDispatcher()
+    service = IngestionService(integration_session, dispatcher=dispatcher, vector_store=FakeVectorStore())
+    repository = service.repository
+    settings = get_settings()
+    current_embed_version = f"{settings.embed_model}-{settings.embed_dimension}"
+
+    document = await repository.create_document(
+        project_id=seeded_project["project_id"],
+        tenant_id=seeded_project["tenant_id"],
+        source_type="web",
+        source_ref="https://example.com/current",
+        status="indexed",
+        title="Current Doc",
+        content_hash=service._content_hash("https://example.com/current"),
+        metadata={},
+        version=1,
+    )
+    await repository.create_chunks(
+        [
+            {
+                "document_id": document.id,
+                "chunk_index": 0,
+                "parent_chunk_id": None,
+                "modality": "text",
+                "content": "Parent",
+                "content_hash": service._content_hash("Parent"),
+                "token_count": 1,
+                "section_title": "Current Doc",
+                "acl": [],
+                "embed_model": None,
+                "embed_version": None,
+                "dimension": 0,
+            },
+            {
+                "document_id": document.id,
+                "chunk_index": 1,
+                "parent_chunk_id": "__PARENT_INDEX__:0",
+                "modality": "text",
+                "content": "Child chunk",
+                "content_hash": service._content_hash("Child chunk"),
+                "token_count": 2,
+                "section_title": "Current Doc",
+                "acl": [],
+                "embed_model": settings.embed_model,
+                "embed_version": current_embed_version,
+                "dimension": settings.embed_dimension,
+            },
+        ]
+    )
+    await repository.commit()
+
+    result = await service.requeue_stale_documents()
+
+    assert result == {"stale_document_count": 0}
+    assert dispatcher.enqueued == []
+
+
+@pytest.mark.asyncio
+async def test_process_document_job_skips_semantic_duplicate_chunk(monkeypatch):
+    embed_calls: list[str] = []
+    upsert_rows: list[dict[str, object]] = []
+
+    async def fake_load(source_type, source_ref):
+        return {
+            "content": "Alpha chunk. Beta chunk.",
+            "metadata": {"title": "Example Article", "content_length": 24},
+            "chunk_count": 1,
+        }
+
+    async def fake_embed_text(content, title):
+        embed_calls.append(content)
+        if content == "Alpha chunk.":
+            return {"values": [0.1, 0.2], "model": "gemini-test", "embed_version": "gemini-test-2", "dimension": 2}
+        return {"values": [0.9, 0.8], "model": "gemini-test", "embed_version": "gemini-test-2", "dimension": 2}
+
+    monkeypatch.setattr(ingestion_service_module, "load_source", fake_load, raising=False)
+    monkeypatch.setattr(ingestion_service_module, "embed_text_content", fake_embed_text, raising=False)
+    monkeypatch.setattr(
+        ingestion_service_module,
+        "build_chunks",
+        lambda *args, **kwargs: [
+            {"content": "Alpha chunk.", "page_number": None, "bbox": None},
+            {"content": "Beta chunk.", "page_number": None, "bbox": None},
+        ],
+        raising=False,
+    )
+
+    class DedupVectorStore(FakeVectorStore):
+        async def find_semantic_duplicate(self, **kwargs):
+            if kwargs["query_vector"] == [0.9, 0.8]:
+                return {"document_id": "doc-existing", "chunk_id": "chunk-existing", "score": 0.99}
+            return None
+
+        async def upsert_chunks(self, chunks):
+            upsert_rows.extend(chunks)
+            return await super().upsert_chunks(chunks)
+
+    service = IngestionService(None, vector_store=DedupVectorStore())  # type: ignore[arg-type]
+
+    async def fake_update_document_status(document, status):
+        document.status = status
+        return document
+
+    async def fake_update_job_status(*args, **kwargs):
+        return None
+
+    async def fake_commit():
+        return None
+
+    async def fake_create_chunks(rows):
+        return [
+            SimpleNamespace(
+                id=UUID(f"00000000-0000-0000-0000-{index + 701:012d}"),
+                modality=row["modality"],
+                acl=row.get("acl", []),
+                page_number=row.get("page_number"),
+                qdrant_point_id=None,
+            )
+            for index, row in enumerate(rows)
+        ]
+
+    async def fake_attach_qdrant_point_ids(chunks, point_ids):
+        return chunks
+
+    async def fake_update_document_after_load(*args, **kwargs):
+        return None
+
+    async def fake_create_chunk_diff_logs(job_id, entries):
+        return entries
+
+    service.repository = SimpleNamespace(
+        update_document_status=fake_update_document_status,
+        update_job_status=fake_update_job_status,
+        commit=fake_commit,
+        create_chunks=fake_create_chunks,
+        attach_qdrant_point_ids=fake_attach_qdrant_point_ids,
+        update_document_after_load=fake_update_document_after_load,
+        create_chunk_diff_logs=fake_create_chunk_diff_logs,
+        get_document=lambda document_id: None,
+        get_document_chunks=lambda document_id: [],
+        archive_chunks=lambda chunks: chunks,
+        supersede_document=lambda document: document,
+        upsert_sync_checkpoint=lambda *args, **kwargs: None,
+    )
+
+    document = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000444"),
+        tenant_id=UUID("00000000-0000-0000-0000-000000000222"),
+        project_id=UUID("00000000-0000-0000-0000-000000000111"),
+        source_type="web",
+        source_ref="https://example.com/article",
+        title="article",
+        metadata_json={},
+        previous_document_id=None,
+        content_hash="hash-before-update",
+    )
+    job = SimpleNamespace(id=UUID("00000000-0000-0000-0000-000000000888"))
+
+    await service._process_document_job(document, job, retry_count=0)
+
+    assert embed_calls == ["Alpha chunk.", "Beta chunk."]
+    assert len(upsert_rows) == 1
+    assert upsert_rows[0]["content"] == "Alpha chunk."

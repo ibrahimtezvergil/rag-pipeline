@@ -36,6 +36,8 @@ class RetrievalContextBlock(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     retrieval_mode: str
+    confidence_score: float | None = None
+    confidence_warning: str | None = None
     retrieval_context: list[RetrievalContextBlock]
     sources: list[QuerySource]
 
@@ -49,5 +51,7 @@ class ChatResponse(BaseModel):
     session_id: str
     answer: str
     retrieval_mode: str
+    confidence_score: float | None = None
+    confidence_warning: str | None = None
     retrieval_context: list[RetrievalContextBlock]
     sources: list[QuerySource]

@@ -41,8 +41,10 @@ class CollectionsService:
             f"/collections/{name}",
             json={
                 "vectors": {
-                    "size": self.dimension,
-                    "distance": "Cosine",
+                    "dense": {
+                        "size": self.dimension,
+                        "distance": "Cosine",
+                    }
                 },
                 "sparse_vectors": {
                     "sparse": {},

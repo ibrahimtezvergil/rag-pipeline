@@ -8,6 +8,7 @@ def test_encode_sparse_text_returns_deterministic_sorted_sparse_vector():
     assert result["indices"] == sorted(result["indices"])
     assert len(result["indices"]) == len(result["values"]) == 3
     assert max(result["values"]) == 2.0
+    assert max(result["indices"]) <= (2**32 - 1)
 
 
 def test_encode_sparse_text_skips_stopwords_and_empty_tokens():

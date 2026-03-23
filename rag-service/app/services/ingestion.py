@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.repositories.ingestion import IngestionRepository
 from app.schemas.ingest import IngestRequest
 from app.services.chunking import build_chunks
@@ -19,7 +20,10 @@ from app.services.embedder import (
     resolve_pdf_embedding,
 )
 from app.services.loaders import decode_base64_source, load_source
+from app.services.observability import emit_event
+from app.services.query_cache import RedisQueryCache
 from app.services.sparse_encoder import encode_sparse_text
+from app.services.tracing import observe, update_current_observation
 from app.services.vector_store import QdrantVectorStore
 
 
@@ -30,11 +34,14 @@ class IngestionService:
         *,
         dispatcher: IngestionDispatcher | None = None,
         vector_store: QdrantVectorStore | None = None,
+        query_cache: RedisQueryCache | None = None,
     ):
         self.repository = IngestionRepository(session)
         self.dispatcher = dispatcher or NullIngestionDispatcher()
         self.vector_store = vector_store or QdrantVectorStore()
+        self.query_cache = query_cache or RedisQueryCache()
 
+    @observe(name="ingestion-service", as_type="chain")
     async def create_ingestion_job(
         self,
         payload: IngestRequest,
@@ -44,22 +51,29 @@ class IngestionService:
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
+        source_ref = self._source_ref(payload)
+        previous_document = await self.repository.get_latest_document_by_source_ref(project.id, source_ref)
+        version = (int(previous_document.version) + 1) if previous_document is not None else 1
         initial_status = "indexing" if payload.mode == "sync" else "pending"
         job_status = "running" if payload.mode == "sync" else "pending"
         document = await self.repository.create_document(
             project_id=project.id,
             tenant_id=project.tenant_id,
             source_type=payload.source_type,
-            source_ref=self._source_ref(payload),
+            source_ref=source_ref,
             status=initial_status,
             title=self._derive_title(payload),
-            content_hash=self._content_hash(self._source_ref(payload)),
+            content_hash=self._content_hash(source_ref),
+            version=version,
+            previous_document_id=previous_document.id if previous_document is not None else None,
+            source_connector_id=uuid.UUID(payload.source_connector_id) if payload.source_connector_id else None,
             metadata={
                 "ingest_mode": payload.mode,
                 **({"source_base64": payload.source_base64} if payload.source_base64 else {}),
                 **({"source_sql": payload.source_sql} if payload.source_sql else {}),
                 **({"title": payload.title} if payload.title else {}),
                 **({"records": payload.records} if payload.records else {}),
+                **({"cursor_state": payload.cursor_state} if payload.cursor_state else {}),
                 **({"origin": payload.origin} if payload.origin else {}),
                 **({"scope_type": payload.scope_type} if payload.scope_type else {}),
                 **({"scope_id": payload.scope_id} if payload.scope_id else {}),
@@ -75,13 +89,34 @@ class IngestionService:
             document_id=document.id,
             status=job_status,
         )
+        update_current_observation(
+            metadata={
+                "tenant_id": str(project.tenant_id),
+                "project_id": str(project.id),
+                "document_id": str(document.id),
+                "source_type": payload.source_type,
+                "mode": payload.mode,
+            }
+        )
 
         if payload.mode == "sync":
-            await self._process_document_job(
-                document,
-                job,
-                retry_count=0,
-            )
+            try:
+                await self._process_document_job(
+                    document,
+                    job,
+                    retry_count=0,
+                )
+            except Exception as exc:
+                await self.repository.update_document_status(document, "failed")
+                await self.repository.update_job_status(
+                    job,
+                    "failed",
+                    retry_count=0,
+                    error_message=str(exc),
+                    completed=True,
+                )
+                await self.repository.commit()
+                raise
         else:
             await self.dispatcher.enqueue(
                 {
@@ -198,6 +233,7 @@ class IngestionService:
         point_ids = [str(chunk.qdrant_point_id) for chunk in chunks if chunk.qdrant_point_id is not None]
         await self.vector_store.delete_points(point_ids)
         await self.repository.commit()
+        await self.query_cache.invalidate_project(str(document.project_id))
 
         return {
             "document_id": str(document.id),
@@ -205,6 +241,29 @@ class IngestionService:
             "archived_chunk_count": len(chunks),
             "qdrant_point_ids": point_ids,
         }
+
+    async def requeue_stale_documents(self, *, limit: int = 100) -> dict[str, int]:
+        current_embed_version = self._current_embed_version()
+        latest_documents = await self.repository.list_latest_documents()
+        stale_document_count = 0
+
+        for document in latest_documents:
+            if stale_document_count >= limit:
+                break
+            if document.status != "indexed":
+                continue
+
+            child_chunks = await self.repository.get_child_chunks(document.id)
+            if not child_chunks:
+                continue
+            if all((chunk.embed_version or "") == current_embed_version for chunk in child_chunks):
+                continue
+
+            payload = self._payload_from_document(document)
+            await self.create_ingestion_job(payload, document.project_id)
+            stale_document_count += 1
+
+        return {"stale_document_count": stale_document_count}
 
     def _parse_uuid(self, raw_value: str, detail: str) -> uuid.UUID:
         try:
@@ -226,6 +285,10 @@ class IngestionService:
     def _content_hash(self, source_ref: str) -> str:
         return hashlib.sha256(source_ref.encode("utf-8")).hexdigest()
 
+    def _current_embed_version(self) -> str:
+        settings = get_settings()
+        return f"{settings.embed_model}-{settings.embed_dimension}"
+
     def _source_ref(self, payload: IngestRequest) -> str:
         if payload.source_ref is not None:
             return str(payload.source_ref)
@@ -235,6 +298,59 @@ class IngestionService:
             return "inline://sql-query"
         assert payload.source_filename is not None
         return f"inline://{payload.source_filename}"
+
+    def _payload_from_document(self, document) -> IngestRequest:
+        metadata = dict(document.metadata_json or {})
+        source_ref = None if str(document.source_ref).startswith("inline://") else str(document.source_ref)
+        source_filename = None
+        if str(document.source_ref).startswith("inline://"):
+            source_filename = str(document.source_ref).removeprefix("inline://")
+        return IngestRequest.model_validate(
+            {
+                "source_type": document.source_type,
+                "source_ref": source_ref,
+                "source_base64": metadata.get("source_base64"),
+                "source_filename": source_filename,
+                "source_sql": metadata.get("source_sql"),
+                "title": metadata.get("title") or document.title,
+                "records": metadata.get("records"),
+                "origin": metadata.get("origin"),
+                "scope_type": metadata.get("scope_type"),
+                "scope_id": metadata.get("scope_id"),
+                "entity_type": metadata.get("entity_type"),
+                "entity_id": metadata.get("entity_id"),
+                "record_ids": metadata.get("record_ids"),
+                "snapshot_date": metadata.get("snapshot_date"),
+                "source_connector_id": (
+                    str(document.source_connector_id) if document.source_connector_id else None
+                ),
+                "cursor_state": metadata.get("cursor_state"),
+                "tags": metadata.get("tags"),
+                "acl": metadata.get("acl"),
+                "mode": "async",
+            }
+        )
+
+    async def _find_semantic_duplicate(
+        self,
+        document,
+        embedding: dict[str, object],
+    ) -> dict[str, object] | None:
+        vector = embedding.get("values")
+        if not isinstance(vector, list) or not vector:
+            return None
+        settings = get_settings()
+        return await self.vector_store.find_semantic_duplicate(
+            query_vector=vector,
+            tenant_id=str(document.tenant_id),
+            scope_type=document.metadata_json.get("scope_type", "project"),
+            scope_id=document.metadata_json.get("scope_id", str(document.project_id)),
+            entity_id=document.metadata_json.get("entity_id"),
+            snapshot_date=document.metadata_json.get("snapshot_date"),
+            tags=document.metadata_json.get("tags"),
+            acl=document.metadata_json.get("acl"),
+            threshold=settings.semantic_dedup_similarity_threshold,
+        )
 
     def _public_job_status(self, job_status: str, document_status: str) -> str:
         if job_status == "failed":
@@ -316,11 +432,17 @@ class IngestionService:
             )
             loaded["embedding"] = document_metadata["embedding"]
 
-        chunk_rows, vector_chunk_indices = await self._build_chunk_rows(document, loaded)
-        chunks = await self.repository.create_chunks(chunk_rows)
+        previous_child_snapshot = await self._load_previous_child_snapshot(document.previous_document_id)
         await self.vector_store.ensure_collection()
+        chunk_rows, vector_chunk_indices, diff_entries = await self._build_chunk_rows(
+            document,
+            loaded,
+            previous_child_snapshot=previous_child_snapshot,
+        )
+        chunks = await self.repository.create_chunks(chunk_rows)
         vector_chunks = [chunks[index] for index in vector_chunk_indices]
         vector_rows = [chunk_rows[index] for index in vector_chunk_indices]
+        embed_ms = max(0, int((monotonic() - started) * 1000))
         point_ids = await self.vector_store.upsert_chunks(
             [
                 {
@@ -347,6 +469,25 @@ class IngestionService:
             ]
         )
         await self.repository.attach_qdrant_point_ids(vector_chunks, point_ids)
+        await self.repository.create_chunk_diff_logs(
+            job.id,
+            self._resolve_diff_chunk_ids(diff_entries, chunks, chunk_rows),
+        )
+        for row_index, (chunk, row) in enumerate(zip(vector_chunks, vector_rows, strict=False)):
+            emit_event(
+                "ingestion.chunk_indexed",
+                {
+                    "tenant_id": str(document.tenant_id),
+                    "project_id": str(document.project_id),
+                    "document_id": str(document.id),
+                    "chunk_id": str(chunk.id),
+                    "chunk_index": row_index,
+                    "modality": chunk.modality,
+                    "embed_ms": embed_ms,
+                    "token_count": (len(str(row.get("content", "")).strip()) // 4) or None,
+                    "vector_dimension": int(row.get("dimension") or len(row.get("vector", []))),
+                },
+            )
         await self.repository.update_document_after_load(
             document,
             status="indexed",
@@ -365,6 +506,9 @@ class IngestionService:
             completed=True,
         )
         await self.repository.commit()
+        await self._update_sync_checkpoint(document)
+        await self._supersede_previous_document(document.previous_document_id)
+        await self.query_cache.invalidate_project(str(document.project_id))
 
     async def _get_job_with_document(self, job_id: str):
         job_uuid = self._parse_uuid(job_id, "Invalid ingestion job id")
@@ -379,7 +523,13 @@ class IngestionService:
             raise HTTPException(status_code=404, detail="Document not found")
         return job, document
 
-    async def _build_chunk_rows(self, document, loaded: dict[str, object]) -> tuple[list[dict[str, object]], list[int]]:
+    async def _build_chunk_rows(
+        self,
+        document,
+        loaded: dict[str, object],
+        *,
+        previous_child_snapshot: dict[str, dict[str, object]] | None = None,
+    ) -> tuple[list[dict[str, object]], list[int], list[dict[str, object]]]:
         content = str(loaded.get("content", "")).strip()
         metadata = loaded["metadata"]
         title = str(metadata.get("title") or document.title or document.source_ref)
@@ -425,7 +575,7 @@ class IngestionService:
                 "content": content or title,
                 "vector": embedding["values"],
             }
-            return [parent_row, vector_row], [1]
+            return [parent_row, vector_row], [1], []
         if document.source_type == "audio":
             chunk_rows: list[dict[str, object]] = []
             vector_chunk_indices: list[int] = []
@@ -482,12 +632,17 @@ class IngestionService:
                         "vector": embedding["values"],
                     }
                 )
-            return chunk_rows, vector_chunk_indices
+            return chunk_rows, vector_chunk_indices, []
 
         raw_chunks = build_chunks(document.source_type, content, metadata)
         chunk_rows: list[dict[str, object]] = []
         vector_chunk_indices: list[int] = []
+        diff_entries: list[dict[str, object]] = []
+        previous_child_snapshot = previous_child_snapshot or {}
+        seen_hashes: set[str] = set()
         for raw_chunk in raw_chunks:
+            content_hash = self._content_hash(raw_chunk["content"])
+            seen_hashes.add(content_hash)
             parent_row_index = len(chunk_rows)
             parent_row = {
                 "document_id": document.id,
@@ -502,12 +657,26 @@ class IngestionService:
                 "embed_model": None,
                 "embed_version": None,
                 "dimension": 0,
-                "content_hash": self._content_hash(raw_chunk["content"]),
+                "content_hash": content_hash,
                 "content": raw_chunk["content"],
                 "vector": [],
             }
             chunk_rows.append(parent_row)
-            embedding = await embed_text_content(raw_chunk["content"], title)
+            previous_match = previous_child_snapshot.get(content_hash)
+            if previous_match is not None and previous_match.get("vector") is not None:
+                embedding = {
+                    "values": previous_match["vector"],
+                    "model": previous_match.get("embed_model") or "",
+                    "embed_version": previous_match.get("embed_version") or "v1",
+                    "dimension": previous_match.get("dimension") or len(previous_match["vector"]),
+                }
+                operation = "unchanged"
+            else:
+                embedding = await embed_text_content(raw_chunk["content"], title)
+                duplicate_match = await self._find_semantic_duplicate(document, embedding)
+                if duplicate_match is not None:
+                    continue
+                operation = "modified" if document.previous_document_id is not None else "new"
             vector_chunk_indices.append(len(chunk_rows))
             chunk_rows.append(
                 {
@@ -521,12 +690,109 @@ class IngestionService:
                     "section_title": title,
                     "acl": list(document.metadata_json.get("acl", [])),
                     "embed_model": str(embedding.get("model") or ""),
-                    "embed_version": "v1",
+                    "embed_version": str(embedding.get("embed_version") or "v1"),
                     "dimension": int(embedding.get("dimension") or len(embedding.get("values", []))),
-                    "content_hash": self._content_hash(raw_chunk["content"]),
+                    "content_hash": content_hash,
                     "content": raw_chunk["content"],
                     "vector": embedding["values"],
                     "sparse_vector": encode_sparse_text(raw_chunk["content"]),
                 }
             )
-        return chunk_rows, vector_chunk_indices
+            diff_entries.append(
+                {
+                    "chunk_row_index": len(chunk_rows) - 1,
+                    "operation": operation,
+                }
+            )
+
+        for previous_hash, previous_match in previous_child_snapshot.items():
+            if previous_hash not in seen_hashes:
+                diff_entries.append(
+                    {
+                        "chunk_id": previous_match["chunk_id"],
+                        "operation": "deleted",
+                    }
+                )
+
+        return chunk_rows, vector_chunk_indices, diff_entries
+
+    async def _supersede_previous_document(self, previous_document_id: uuid.UUID | None) -> None:
+        if previous_document_id is None:
+            return
+
+        previous_document = await self.repository.get_document(previous_document_id)
+        if previous_document is None:
+            return
+
+        previous_chunks = await self.repository.get_document_chunks(previous_document.id)
+        await self.repository.archive_chunks(previous_chunks)
+        await self.repository.supersede_document(previous_document)
+        point_ids = [
+            str(chunk.qdrant_point_id)
+            for chunk in previous_chunks
+            if chunk.qdrant_point_id is not None
+        ]
+        await self.vector_store.delete_points(point_ids)
+        await self.repository.commit()
+
+    async def _load_previous_child_snapshot(
+        self,
+        previous_document_id: uuid.UUID | None,
+    ) -> dict[str, dict[str, object]]:
+        if previous_document_id is None:
+            return {}
+
+        previous_chunks = await self.repository.get_document_chunks(previous_document_id)
+        child_chunks = [
+            chunk
+            for chunk in previous_chunks
+            if chunk.parent_chunk_id is not None and chunk.modality == "text" and chunk.content_hash
+        ]
+        point_ids = [str(chunk.qdrant_point_id) for chunk in child_chunks if chunk.qdrant_point_id is not None]
+        vectors = await self.vector_store.fetch_dense_vectors(point_ids)
+        snapshot: dict[str, dict[str, object]] = {}
+        for chunk in child_chunks:
+            point_id = str(chunk.qdrant_point_id) if chunk.qdrant_point_id is not None else None
+            snapshot[str(chunk.content_hash)] = {
+                "chunk_id": chunk.id,
+                "embed_model": chunk.embed_model,
+                "embed_version": chunk.embed_version,
+                "dimension": chunk.dimension,
+                "vector": vectors.get(point_id) if point_id is not None else None,
+            }
+        return snapshot
+
+    def _resolve_diff_chunk_ids(self, diff_entries, chunks, chunk_rows):
+        resolved: list[dict[str, object]] = []
+        row_index_to_chunk_id = {
+            int(row["chunk_index"]): chunk.id
+            for row, chunk in zip(chunk_rows, chunks, strict=False)
+        }
+        for entry in diff_entries:
+            if entry.get("chunk_id") is not None:
+                resolved.append(entry)
+                continue
+            chunk_row_index = entry.get("chunk_row_index")
+            resolved.append(
+                {
+                    "chunk_id": row_index_to_chunk_id.get(int(chunk_row_index)) if chunk_row_index is not None else None,
+                    "operation": entry["operation"],
+                }
+            )
+        return resolved
+
+    async def _update_sync_checkpoint(self, document) -> None:
+        source_connector_id = getattr(document, "source_connector_id", None)
+        if source_connector_id is None:
+            return
+
+        cursor_state = dict((document.metadata_json or {}).get("cursor_state") or {})
+        cursor_state.update(
+            {
+                "document_id": str(document.id),
+                "source_ref": str(document.source_ref),
+                "content_hash": str(document.content_hash),
+            }
+        )
+        await self.repository.upsert_sync_checkpoint(source_connector_id, cursor_state)
+        await self.repository.commit()
