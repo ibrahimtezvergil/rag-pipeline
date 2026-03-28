@@ -52,7 +52,7 @@ async def client(app):
 def valid_headers() -> dict[str, str]:
     return {
         "X-API-Key": "test-key-1",
-        "X-Project-ID": str(uuid4()),
+        "X-Application-ID": str(uuid4()),
     }
 
 

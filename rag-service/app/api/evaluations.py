@@ -13,8 +13,8 @@ from app.services.evaluations import EvaluationService
 router = APIRouter()
 
 
-def _parse_project_id(raw_project_id: str) -> uuid.UUID:
-    return uuid.UUID(raw_project_id)
+def _parse_application_id(raw_application_id: str) -> uuid.UUID:
+    return uuid.UUID(raw_application_id)
 
 
 def _get_evaluation_service(
@@ -35,8 +35,8 @@ async def create_evaluation(
     payload: EvaluationCreateRequest,
     service: EvaluationService = Depends(_get_evaluation_service),
 ):
-    project_id = _parse_project_id(request.state.project_id)
-    result = await service.create_run(payload, project_id)
+    application_id = _parse_application_id(request.state.application_id)
+    result = await service.create_run(payload, application_id)
     response.status_code = status.HTTP_201_CREATED
     return EvaluationRunResponse.model_validate(result)
 
@@ -47,6 +47,6 @@ async def get_evaluation(
     run_id: str,
     service: EvaluationService = Depends(_get_evaluation_service),
 ):
-    project_id = _parse_project_id(request.state.project_id)
-    result = await service.get_run(run_id, project_id)
+    application_id = _parse_application_id(request.state.application_id)
+    result = await service.get_run(run_id, application_id)
     return EvaluationRunResponse.model_validate(result)

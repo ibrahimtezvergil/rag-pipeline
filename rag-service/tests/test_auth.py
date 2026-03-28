@@ -15,7 +15,7 @@ async def test_protected_endpoint_rejects_invalid_api_key(client):
         "/protected",
         headers={
             "X-API-Key": "invalid-key",
-            "X-Project-ID": "project-123",
+            "X-Application-ID": "application-123",
         },
     )
 
@@ -24,11 +24,27 @@ async def test_protected_endpoint_rejects_invalid_api_key(client):
 
 
 @pytest.mark.asyncio
-async def test_protected_endpoint_accepts_valid_headers(client, valid_headers):
+async def test_protected_endpoint_accepts_application_header(client, valid_headers):
     response = await client.get("/protected", headers=valid_headers)
 
     assert response.status_code == 200
     assert response.json() == {
-        "project_id": valid_headers["X-Project-ID"],
+        "application_id": valid_headers["X-Application-ID"],
+        "status": "authorized",
+    }
+
+
+@pytest.mark.asyncio
+async def test_protected_endpoint_accepts_project_header_as_deprecated_fallback(client, valid_headers):
+    legacy_headers = {
+        "X-API-Key": valid_headers["X-API-Key"],
+        "X-Project-ID": valid_headers["X-Application-ID"],
+    }
+
+    response = await client.get("/protected", headers=legacy_headers)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "application_id": valid_headers["X-Application-ID"],
         "status": "authorized",
     }

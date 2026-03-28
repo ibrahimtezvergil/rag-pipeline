@@ -13,7 +13,7 @@ async def test_post_evaluations_creates_run(client, app, valid_headers):
         assert payload.dataset_name == "smoke-set"
         assert len(payload.samples) == 1
         assert payload.samples[0].question == "Which invoice was paid?"
-        assert str(project_id) == valid_headers["X-Project-ID"]
+        assert str(project_id) == valid_headers["X-Application-ID"]
         return {
             "run_id": str(uuid4()),
             "status": "pending",
@@ -50,7 +50,7 @@ async def test_get_evaluation_returns_run_status(client, app, valid_headers):
 
     async def get_run(run_id_arg, project_id):
         assert run_id_arg == run_id
-        assert str(project_id) == valid_headers["X-Project-ID"]
+        assert str(project_id) == valid_headers["X-Application-ID"]
         return {
             "run_id": run_id,
             "status": "completed",
@@ -82,7 +82,7 @@ async def test_post_feedback_records_chunk_feedback(client, app, valid_headers):
         assert payload.rating == "down"
         assert [str(item) for item in payload.chunk_ids] == [chunk_id]
         assert payload.note == "Yanlis kaynak"
-        assert str(project_id) == valid_headers["X-Project-ID"]
+        assert str(project_id) == valid_headers["X-Application-ID"]
         return {
             "status": "recorded",
             "rating": "down",
@@ -115,7 +115,7 @@ async def test_post_schedules_creates_schedule(client, app, valid_headers):
         assert payload.cron_expr == "*/30 * * * *"
         assert payload.ingest.source_type == "web"
         assert str(payload.ingest.source_ref) == "https://example.com/article"
-        assert str(project_id) == valid_headers["X-Project-ID"]
+        assert str(project_id) == valid_headers["X-Application-ID"]
         return {
             "schedule_id": str(uuid4()),
             "status": "enabled",

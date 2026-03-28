@@ -8,13 +8,13 @@ from app.services.rate_limit import RedisSlidingWindowRateLimiter
 
 @dataclass(slots=True)
 class RequestContext:
-    project_id: str
+    application_id: str
     api_key: str
 
 
 def get_request_context(request: Request) -> RequestContext:
     return RequestContext(
-        project_id=request.state.project_id,
+        application_id=request.state.application_id,
         api_key=request.state.api_key,
     )
 
@@ -32,7 +32,7 @@ def require_rate_limit(route_name: str, limit_value: int):
     async def dependency(request: Request) -> None:
         limiter = get_rate_limiter(request)
         result = await limiter.check(
-            project_id=request.state.project_id,
+            project_id=request.state.application_id,
             route_name=route_name,
             limit=limit_value,
         )
