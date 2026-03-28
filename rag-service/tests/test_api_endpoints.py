@@ -9,11 +9,11 @@ from app.api import query as query_api_module
 
 @pytest.mark.asyncio
 async def test_post_evaluations_creates_run(client, app, valid_headers):
-    async def create_run(payload, project_id):
+    async def create_run(payload, application_id):
         assert payload.dataset_name == "smoke-set"
         assert len(payload.samples) == 1
         assert payload.samples[0].question == "Which invoice was paid?"
-        assert str(project_id) == valid_headers["X-Application-ID"]
+        assert str(application_id) == valid_headers["X-Application-ID"]
         return {
             "run_id": str(uuid4()),
             "status": "pending",
@@ -48,9 +48,9 @@ async def test_post_evaluations_creates_run(client, app, valid_headers):
 async def test_get_evaluation_returns_run_status(client, app, valid_headers):
     run_id = str(uuid4())
 
-    async def get_run(run_id_arg, project_id):
+    async def get_run(run_id_arg, application_id):
         assert run_id_arg == run_id
-        assert str(project_id) == valid_headers["X-Application-ID"]
+        assert str(application_id) == valid_headers["X-Application-ID"]
         return {
             "run_id": run_id,
             "status": "completed",
@@ -78,11 +78,11 @@ async def test_get_evaluation_returns_run_status(client, app, valid_headers):
 async def test_post_feedback_records_chunk_feedback(client, app, valid_headers):
     chunk_id = str(uuid4())
 
-    async def create_feedback(payload, project_id):
+    async def create_feedback(payload, application_id):
         assert payload.rating == "down"
         assert [str(item) for item in payload.chunk_ids] == [chunk_id]
         assert payload.note == "Yanlis kaynak"
-        assert str(project_id) == valid_headers["X-Application-ID"]
+        assert str(application_id) == valid_headers["X-Application-ID"]
         return {
             "status": "recorded",
             "rating": "down",
@@ -111,11 +111,11 @@ async def test_post_feedback_records_chunk_feedback(client, app, valid_headers):
 
 @pytest.mark.asyncio
 async def test_post_schedules_creates_schedule(client, app, valid_headers):
-    async def create_schedule(payload, project_id):
+    async def create_schedule(payload, application_id):
         assert payload.cron_expr == "*/30 * * * *"
         assert payload.ingest.source_type == "web"
         assert str(payload.ingest.source_ref) == "https://example.com/article"
-        assert str(project_id) == valid_headers["X-Application-ID"]
+        assert str(application_id) == valid_headers["X-Application-ID"]
         return {
             "schedule_id": str(uuid4()),
             "status": "enabled",
@@ -148,7 +148,7 @@ async def test_post_schedules_creates_schedule(client, app, valid_headers):
 async def test_post_query_returns_answer(client, app, valid_headers):
     async def answer_question(
         question,
-        project_id,
+        application_id,
         scope_type=None,
         scope_id=None,
         entity_id=None,
@@ -162,7 +162,7 @@ async def test_post_query_returns_answer(client, app, valid_headers):
         exclude_documents=None,
     ):
         assert question == "Rapor ne anlatıyor?"
-        assert str(project_id) == valid_headers["X-Project-ID"]
+        assert str(application_id) == valid_headers["X-Application-ID"]
         assert scope_type is None
         assert scope_id is None
         assert entity_id is None
@@ -231,7 +231,7 @@ async def test_post_query_returns_answer(client, app, valid_headers):
 async def test_post_query_response_includes_confidence_fields(client, app, valid_headers):
     async def answer_question(
         question,
-        project_id,
+        application_id,
         scope_type=None,
         scope_id=None,
         entity_id=None,
@@ -268,8 +268,8 @@ async def test_post_query_response_includes_confidence_fields(client, app, valid
 
 @pytest.mark.asyncio
 async def test_post_query_returns_429_when_rate_limited(client, app, valid_headers):
-    async def check(*, project_id, route_name, limit):
-        assert project_id == valid_headers["X-Project-ID"]
+    async def check(*, application_id, route_name, limit):
+        assert application_id == valid_headers["X-Application-ID"]
         assert route_name == "query"
         assert limit == 60
         return SimpleNamespace(allowed=False, retry_after_seconds=17)
@@ -291,7 +291,7 @@ async def test_post_query_returns_429_when_rate_limited(client, app, valid_heade
 async def test_post_query_passes_scope_filters(client, app, valid_headers):
     async def answer_question(
         question,
-        project_id,
+        application_id,
         scope_type=None,
         scope_id=None,
         entity_id=None,
@@ -305,7 +305,7 @@ async def test_post_query_passes_scope_filters(client, app, valid_headers):
         exclude_documents=None,
     ):
         assert question == "Musteri ozeti?"
-        assert str(project_id) == valid_headers["X-Project-ID"]
+        assert str(application_id) == valid_headers["X-Application-ID"]
         assert scope_type == "customer"
         assert scope_id == "cust_42"
         assert entity_id is None
@@ -347,7 +347,7 @@ async def test_post_query_passes_scope_filters(client, app, valid_headers):
 async def test_post_query_passes_sparse_retrieval_mode(client, app, valid_headers):
     async def answer_question(
         question,
-        project_id,
+        application_id,
         scope_type=None,
         scope_id=None,
         entity_id=None,
@@ -391,7 +391,7 @@ async def test_post_query_passes_sparse_retrieval_mode(client, app, valid_header
 async def test_post_query_passes_multi_collection_request(client, app, valid_headers):
     async def answer_question(
         question,
-        project_id,
+        application_id,
         scope_type=None,
         scope_id=None,
         entity_id=None,
@@ -437,7 +437,7 @@ async def test_post_query_passes_multi_collection_request(client, app, valid_hea
 async def test_post_query_passes_negative_filters(client, app, valid_headers):
     async def answer_question(
         question,
-        project_id,
+        application_id,
         scope_type=None,
         scope_id=None,
         entity_id=None,
@@ -479,7 +479,7 @@ async def test_post_query_passes_negative_filters(client, app, valid_headers):
 async def test_post_query_passes_acl_filters(client, app, valid_headers):
     async def answer_question(
         question,
-        project_id,
+        application_id,
         scope_type=None,
         scope_id=None,
         entity_id=None,
@@ -516,7 +516,7 @@ async def test_post_query_passes_acl_filters(client, app, valid_headers):
 
 @pytest.mark.asyncio
 async def test_post_chat_returns_session_answer(client, app, valid_headers):
-    async def reply(message, project_id, session_id=None):
+    async def reply(message, application_id, session_id=None):
         assert message == "Bu raporun ozeti ne?"
         assert session_id is None
         return {
@@ -562,7 +562,7 @@ async def test_post_chat_returns_session_answer(client, app, valid_headers):
 
 @pytest.mark.asyncio
 async def test_post_chat_returns_429_when_rate_limited(client, app, valid_headers):
-    async def check(*, project_id, route_name, limit):
+    async def check(*, application_id, route_name, limit):
         assert route_name == "chat"
         assert limit == 60
         return SimpleNamespace(allowed=False, retry_after_seconds=9)
@@ -626,7 +626,7 @@ async def test_post_collections_creates_collection(client, app, valid_headers):
 
 @pytest.mark.asyncio
 async def test_post_ingest_returns_429_when_rate_limited(client, app, valid_headers):
-    async def check(*, project_id, route_name, limit):
+    async def check(*, application_id, route_name, limit):
         assert route_name == "ingest"
         assert limit == 20
         return SimpleNamespace(allowed=False, retry_after_seconds=12)
@@ -645,7 +645,7 @@ async def test_post_ingest_returns_429_when_rate_limited(client, app, valid_head
 
 @pytest.mark.asyncio
 async def test_post_ingest_batch_returns_429_when_rate_limited(client, app, valid_headers):
-    async def check(*, project_id, route_name, limit):
+    async def check(*, application_id, route_name, limit):
         assert route_name == "ingest_batch"
         assert limit == 10
         return SimpleNamespace(allowed=False, retry_after_seconds=22)
@@ -674,7 +674,7 @@ async def test_get_collections_is_not_rate_limited(client, app, valid_headers):
     async def list_collections():
         return {"items": [{"name": "rag_chunks", "dimension": 768}]}
 
-    async def check(*, project_id, route_name, limit):
+    async def check(*, application_id, route_name, limit):
         raise AssertionError("rate limiter should not run for collections")
 
     app.state.collections_service = SimpleNamespace(
@@ -694,7 +694,7 @@ async def test_post_query_updates_trace_metadata_without_raw_question(client, ap
 
     async def answer_question(
         question,
-        project_id,
+        application_id,
         scope_type=None,
         scope_id=None,
         entity_id=None,
@@ -730,7 +730,7 @@ async def test_post_query_updates_trace_metadata_without_raw_question(client, ap
 
     assert response.status_code == 200
     assert captured
-    assert captured[0]["metadata"]["project_id"] == valid_headers["X-Project-ID"]
+    assert captured[0]["metadata"]["application_id"] == valid_headers["X-Application-ID"]
     assert "question" not in captured[0]["metadata"]
 
 
@@ -738,7 +738,7 @@ async def test_post_query_updates_trace_metadata_without_raw_question(client, ap
 async def test_post_ingest_updates_trace_metadata_without_payload_body(client, app, valid_headers, monkeypatch):
     captured: list[dict[str, object]] = []
 
-    async def create_ingestion_job(payload, project_id):
+    async def create_ingestion_job(payload, application_id):
         return {
             "document_id": str(uuid4()),
             "ingestion_job_id": str(uuid4()),
@@ -763,6 +763,6 @@ async def test_post_ingest_updates_trace_metadata_without_payload_body(client, a
 
     assert response.status_code == 202
     assert captured
-    assert captured[0]["metadata"]["project_id"] == valid_headers["X-Project-ID"]
+    assert captured[0]["metadata"]["application_id"] == valid_headers["X-Application-ID"]
     assert captured[0]["metadata"]["source_type"] == "web"
     assert "source_ref" not in captured[0]["metadata"]

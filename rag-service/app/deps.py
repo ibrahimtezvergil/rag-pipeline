@@ -32,7 +32,7 @@ def require_rate_limit(route_name: str, limit_value: int):
     async def dependency(request: Request) -> None:
         limiter = get_rate_limiter(request)
         result = await limiter.check(
-            project_id=request.state.application_id,
+            application_id=request.state.application_id,
             route_name=route_name,
             limit=limit_value,
         )

@@ -22,12 +22,12 @@
 - [x] FastAPI proje yapısı oluştur (`app/`, `workers/`, `tests/`) — Ref: `rag-service/app/main.py`, `rag-service/app/api/router.py` | Akış: `main -> router -> service/worker`
 - [x] Docker Compose: FastAPI + PostgreSQL + Qdrant + Redis + Langfuse — Ref: `rag-service/docker-compose.yml` | Akış: `api + worker -> postgres/qdrant/redis/langfuse`
 - [x] `.env` yapısı ve config yönetimi (`pydantic-settings`) — Ref: `rag-service/app/config.py` | Akış: `.env -> Settings -> app/services`
-- [x] X-API-Key + X-Project-ID middleware (auth) — Ref: `rag-service/app/middleware/auth.py`, `rag-service/app/deps.py` | Akış: `header -> middleware -> request.state`
+- [x] X-API-Key + X-Application-ID middleware (auth) — Ref: `rag-service/app/middleware/auth.py`, `rag-service/app/deps.py` | Akış: `header -> middleware -> request.state`
 - [x] `/health` endpoint — Qdrant, PostgreSQL, Redis, Embedder durumu — Ref: `rag-service/app/api/health.py`, `rag-service/app/services/health.py` | Akış: `/health -> collector -> service checks`
 
 ### Veritabanı (PostgreSQL)
 - [x] `rag_tenants` tablosu — Ref: `rag-service/app/models/db.py`, `rag-service/migrations/versions/001_initial_schema.py` | Akış: `tenant auth -> tenant row`
-- [x] `rag_projects` tablosu — `config` JSONB dahil (top_k, threshold, latency_budget_ms, token_budget) — Ref: `rag-service/app/models/db.py` | Akış: `project header -> config -> retrieval/chat`
+- [x] `rag_applications` tablosu — `config` JSONB dahil (top_k, threshold, latency_budget_ms, token_budget) — Ref: `rag-service/app/models/db.py` | Akış: `application header -> config -> retrieval/chat`
 - [x] `rag_documents` tablosu — `version`, `previous_document_id`, `source_connector_id`, `file_size_bytes`, `title`, `embed_model` dahil — Ref: `rag-service/app/models/db.py` | Akış: `ingest request -> document row -> status/version`
 - [x] `rag_chunks` tablosu — `parent_chunk_id`, `modality`, `page_number`, `bbox`, `section_title`, `acl`, `is_archived`, `embed_model`, `embed_version`, `dimension` dahil — Ref: `rag-service/app/models/db.py` | Akış: `chunker -> chunk rows -> qdrant bridge`
 - [x] `rag_ingestion_jobs` tablosu — job_type, status, retry_count, duration_ms, chunks_processed — Ref: `rag-service/app/models/db.py`, `rag-service/workers/tasks/ingest.py` | Akış: `enqueue -> job row -> retry/status`
@@ -44,7 +44,7 @@
 - [x] Web loader — crawl4ai (JS render, nav/footer temizleme, static fallback) — Ref: `rag-service/app/services/loaders.py` | Akış: `URL -> crawl/render -> clean text -> chunk`
 - [x] Audio loader — Gemini Embedding 2 native embed (120s clip window'lara böl) — Ref: `rag-service/app/services/media.py`, `rag-service/app/services/ingestion.py` | Akış: `audio -> 120s clips -> embed -> chunk rows`
 - [ ] Video loader — ffmpeg → 120s clip → Gemini Embedding 2 (video modality)
-- [ ] DB loader — SQL → SummaryFormatter → text embed — Ref: `rag-service/app/services/loaders.py`, `rag-service/app/services/summary_formatter.py` | Akış: `SQL result -> summary text -> embed` ⚠️ Devre dışı (2026-03-22): tenant izolasyonu yoktu — harici DB connection string + per-project scoping implement edilene kadar `NotImplementedError` fırlatıyor
+- [ ] DB loader — SQL → SummaryFormatter → text embed — Ref: `rag-service/app/services/loaders.py`, `rag-service/app/services/summary_formatter.py` | Akış: `SQL result -> summary text -> embed` ⚠️ Devre dışı (2026-03-22): tenant izolasyonu yoktu — harici DB connection string + per-application scoping implement edilene kadar `NotImplementedError` fırlatıyor
 - [x] Image loader — Gemini Embedding 2 direkt embed (PNG, JPEG) — Ref: `rag-service/app/services/loaders.py`, `rag-service/app/services/ingestion.py` | Akış: `image bytes -> direct embed -> vector row`
 - [ ] Email loader — MIME parse → text embed
 - [ ] Chat loader — WhatsApp / Slack export parse
@@ -98,7 +98,7 @@
 - [x] Sparse search — BM25 (Snowball Türkçe stemmer) → Qdrant — Ref: `rag-service/app/services/sparse_encoder.py`, `rag-service/app/services/vector_store.py` | Akış: `text -> sparse vector -> qdrant sparse search`
 - [x] RRF fusion — dense + sparse birleştir — Ref: `rag-service/app/services/query.py` | Akış: `dense hits + sparse hits -> RRF merge`
 - [x] Cohere Rerank-3 entegrasyonu — Ref: `rag-service/app/services/reranker.py`, `rag-service/app/services/query.py` | Akış: `hybrid candidates -> Cohere rerank -> final order`
-- [x] Dinamik top-K ve score threshold — senaryo bazlı config — Ref: `rag-service/app/services/query.py`, `rag-service/app/models/db.py` | Akış: `project config -> candidate cut/filter`
+- [x] Dinamik top-K ve score threshold — senaryo bazlı config — Ref: `rag-service/app/services/query.py`, `rag-service/app/models/db.py` | Akış: `application config -> candidate cut/filter`
 - [x] Multi-collection query — `collections[]` + `merge_strategy` — Ref: `rag-service/app/schemas/query.py`, `rag-service/app/services/query.py` | Akış: `collections[] -> per collection retrieve -> merge`
 - [x] Negative filtering — `exclude_sources`, `exclude_documents` — Ref: `rag-service/app/schemas/query.py`, `rag-service/app/services/query.py` | Akış: `request excludes -> source prune`
 - [x] Chunk seviyesi ACL — `acl[]` payload filter — Ref: `rag-service/app/schemas/ingest.py`, `rag-service/app/services/vector_store.py`, `rag-service/app/services/query.py` | Akış: `ingest acl -> qdrant filter -> post-filter`
@@ -127,7 +127,7 @@
 - [x] Cache invalidation — collection re-index edilince — Ref: `rag-service/app/services/query_cache.py`, `rag-service/app/services/ingestion.py` | Akış: `successful ingest/delete -> project cache index lookup -> cached query keys delete`
 
 ### Re-index & Versioning
-- [x] Document versioning — `version++`, `previous_document_id` — Ref: `rag-service/app/repositories/ingestion.py`, `rag-service/app/services/ingestion.py` | Akış: `same project+source_ref ingest -> latest version lookup -> new document version++ -> successful index sonrası previous version supersede/archive`
+- [x] Document versioning — `version++`, `previous_document_id` — Ref: `rag-service/app/repositories/ingestion.py`, `rag-service/app/services/ingestion.py` | Akış: `same application+source_ref ingest -> latest version lookup -> new document version++ -> successful index sonrası previous version supersede/archive`
 - [x] Chunk-level hash karşılaştırma — sadece değişen chunk'lar embed edilir — Ref: `rag-service/app/services/ingestion.py`, `rag-service/app/services/vector_store.py` | Akış: `previous child hashes + qdrant vector fetch -> unchanged chunk vector reuse -> only changed chunks re-embed`
 - [x] Diff log yazımı — `rag_chunk_diff_log` her ingestion'da doldur — Ref: `rag-service/app/repositories/ingestion.py`, `rag-service/app/services/ingestion.py` | Akış: `ingest compare -> new/modified/unchanged/deleted classification -> rag_chunk_diff_log rows`
 - [x] Scheduled re-index — `POST /schedules`, cron bazlı ARQ job — Ref: `rag-service/app/api/schedules.py`, `rag-service/app/services/schedules.py`, `rag-service/workers/tasks/schedules.py` | Akış: `POST /schedules -> rag_schedules persist(next_run_at) -> ARQ cron tick due schedule scan -> checkpoint merge -> async ingestion enqueue`
@@ -142,7 +142,7 @@
 ### Diğer
 - [x] Audio metadata pipeline (opsiyonel) — Whisper + pyannote diarization (timestamp + speaker metadata için) — Ref: `rag-service/app/services/audio_metadata.py`, `rag-service/app/services/ingestion.py`, `rag-service/tests/test_audio_metadata.py`, `rag-service/tests/test_worker_ingest.py` | Akış: `audio bytes -> best-effort metadata extract -> transcript/segments document metadata -> clip transcript varsa audio chunk content enrich, yoksa clip summary fallback`
 - [x] Ingestion webhook callback — HMAC-SHA256 imzalı, `callback_url` desteği — Ref: `rag-service/app/services/callbacks.py`, `rag-service/app/schemas/ingest.py`, `rag-service/app/services/ingestion.py`, `rag-service/workers/tasks/ingest.py`, `rag-service/tests/test_callbacks.py`, `rag-service/tests/test_worker_ingest.py` | Akış: `async ingest request -> callback_url enqueue payload -> worker completed/failed -> signed POST -> fail-open callback delivery`
-- [x] Rate limiting — Redis sliding window, project_id bazlı, 429 + Retry-After — Ref: `rag-service/app/services/rate_limit.py`, `rag-service/app/deps.py`, `rag-service/app/api/query.py`, `rag-service/app/api/ingest.py` | Akış: `project+route -> redis sliding window -> 429/Retry-After`
+- [x] Rate limiting — Redis sliding window, application_id bazli, 429 + Retry-After — Ref: `rag-service/app/services/rate_limit.py`, `rag-service/app/deps.py`, `rag-service/app/api/query.py`, `rag-service/app/api/ingest.py` | Akış: `application+route -> redis sliding window -> 429/Retry-After`
 - [x] Circuit breaker — Qdrant/Gemini/Cohere/LLM per-service kurallar — Ref: `rag-service/app/services/circuit_breaker.py`, `rag-service/app/services/llm.py`, `rag-service/app/services/embedder.py`, `rag-service/app/services/reranker.py`, `rag-service/app/services/vector_store.py`, `rag-service/app/services/query.py` | Akış: `provider boundary -> before_call -> upstream call -> success/failure state update -> fast-fail veya mevcut query fallback`
 - [x] Confidence score — top chunk score ortalaması, düşükse uyarı — Ref: `rag-service/app/services/query.py`, `rag-service/app/schemas/query.py` | Akış: `final source scores -> normalize -> average -> confidence_score + optional warning`
 - [x] Query expansion — sinonim sözlüğü + LLM genişletme — Ref: `rag-service/app/services/query_expansion.py`, `rag-service/app/services/query.py` | Akış: `question -> synonym expand -> optional llm rewrite -> retrieval input`
@@ -228,7 +228,7 @@ P1 ve P2 kapsamındaki tüm [x] işaretli maddeler büyük ölçüde gerçek, ç
 - **FastAPI proje yapısı:** `main.py`, `api/router.py`, tüm alt routerlar doğru. `create_app()` factory pattern, middleware ve router kayıtları yerinde.
 - **Docker Compose:** FastAPI + PostgreSQL + Qdrant + Redis + Langfuse servisleri tanımlı; healthcheck ve `depends_on` doğru.
 - **Config yönetimi (pydantic-settings):** `Settings` sınıfı `pydantic_settings.BaseSettings` kullanıyor, `.env` okunuyor, `api_keys_set` property doğru.
-- **X-API-Key + X-Project-ID middleware:** `AuthMiddleware` JSONResponse (HTTPException değil) döndürüyor — spec ile tam uyumlu. `request.state.api_key` ve `request.state.project_id` setleniyor.
+- **X-API-Key + X-Application-ID middleware:** `AuthMiddleware` JSONResponse (HTTPException değil) döndürüyor — spec ile tam uyumlu. `request.state.api_key` ve `request.state.application_id` setleniyor.
 - **`/health` endpoint:** Qdrant, PostgreSQL, Redis, Embedder probe'ları çalışıyor; degraded durumda 503 dönüyor.
 - **Tüm veritabanı tabloları:** `db.py` modeli ve `001_initial_schema.py` migration tam uyumlu — tüm 8 tablo mevcut.
 - **`rag_chunks` kolonları:** `parent_chunk_id`, `modality`, `page_number`, `bbox`, `section_title`, `acl`, `is_archived`, `embed_model`, `embed_version`, `dimension` hepsi mevcut.

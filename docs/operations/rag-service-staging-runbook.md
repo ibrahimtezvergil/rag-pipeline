@@ -47,7 +47,7 @@ Beklenen durum:
 ```bash
 curl -sS -X POST http://127.0.0.1:18000/collections \
   -H 'X-API-Key: staging-key-1' \
-  -H 'X-Project-ID: <project-id>' \
+  -H 'X-Application-ID: <application-id>' \
   -H 'Content-Type: application/json' \
   -d '{"name":"rag_chunks"}'
 ```
@@ -57,7 +57,7 @@ Sonra sample ingest:
 ```bash
 curl -sS -X POST 'http://127.0.0.1:18000/ingest?mode=sync' \
   -H 'X-API-Key: staging-key-1' \
-  -H 'X-Project-ID: <project-id>' \
+  -H 'X-Application-ID: <application-id>' \
   -H 'Content-Type: application/json' \
   -d '{
     "source_type": "structured",
@@ -71,7 +71,7 @@ Sonra sample query:
 ```bash
 curl -sS -X POST http://127.0.0.1:18000/query \
   -H 'X-API-Key: staging-key-1' \
-  -H 'X-Project-ID: <project-id>' \
+  -H 'X-Application-ID: <application-id>' \
   -H 'Content-Type: application/json' \
   -d '{"question":"Which invoice was paid?"}'
 ```

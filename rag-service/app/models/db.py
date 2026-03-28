@@ -54,9 +54,9 @@ class RagDocument(Base):
     __tablename__ = "rag_documents"
 
     id: Mapped[uuid.UUID] = uuid_column()
-    project_id: Mapped[uuid.UUID] = mapped_column(
+    application_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("rag_projects.id", ondelete="CASCADE"),
+        ForeignKey("rag_applications.id", ondelete="CASCADE"),
         nullable=False,
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -169,9 +169,9 @@ class RagSchedule(Base):
     __tablename__ = "rag_schedules"
 
     id: Mapped[uuid.UUID] = uuid_column()
-    project_id: Mapped[uuid.UUID] = mapped_column(
+    application_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("rag_projects.id", ondelete="CASCADE"),
+        ForeignKey("rag_applications.id", ondelete="CASCADE"),
         nullable=False,
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -216,9 +216,9 @@ class RagEvaluationRun(Base):
     __tablename__ = "rag_evaluation_runs"
 
     id: Mapped[uuid.UUID] = uuid_column()
-    project_id: Mapped[uuid.UUID] = mapped_column(
+    application_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("rag_projects.id", ondelete="CASCADE"),
+        ForeignKey("rag_applications.id", ondelete="CASCADE"),
         nullable=False,
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -271,9 +271,9 @@ class RagChunkFeedback(Base):
         ForeignKey("rag_tenants.id", ondelete="CASCADE"),
         nullable=False,
     )
-    project_id: Mapped[uuid.UUID] = mapped_column(
+    application_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("rag_projects.id", ondelete="CASCADE"),
+        ForeignKey("rag_applications.id", ondelete="CASCADE"),
         nullable=False,
     )
     document_id: Mapped[uuid.UUID] = mapped_column(

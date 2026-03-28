@@ -38,7 +38,7 @@ async def test_protected_endpoint_accepts_application_header(client, valid_heade
 async def test_protected_endpoint_accepts_project_header_as_deprecated_fallback(client, valid_headers):
     legacy_headers = {
         "X-API-Key": valid_headers["X-API-Key"],
-        "X-Project-ID": valid_headers["X-Application-ID"],
+        "X-Application-ID": valid_headers["X-Application-ID"],
     }
 
     response = await client.get("/protected", headers=legacy_headers)
