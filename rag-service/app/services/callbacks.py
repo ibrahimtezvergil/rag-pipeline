@@ -13,7 +13,7 @@ def build_ingestion_callback_payload(
     *,
     document_id: str,
     ingestion_job_id: str,
-    project_id: str,
+    application_id: str,
     status: str,
     source_type: str,
     error_message: str | None = None,
@@ -21,7 +21,7 @@ def build_ingestion_callback_payload(
     payload: dict[str, object] = {
         "document_id": document_id,
         "ingestion_job_id": ingestion_job_id,
-        "project_id": project_id,
+        "application_id": application_id,
         "status": status,
         "source_type": source_type,
     }
@@ -40,7 +40,7 @@ async def send_ingestion_callback(
     callback_url: str,
     document_id: str,
     ingestion_job_id: str,
-    project_id: str,
+    application_id: str,
     status: str,
     source_type: str,
     error_message: str | None = None,
@@ -48,7 +48,7 @@ async def send_ingestion_callback(
     payload = build_ingestion_callback_payload(
         document_id=document_id,
         ingestion_job_id=ingestion_job_id,
-        project_id=project_id,
+        application_id=application_id,
         status=status,
         source_type=source_type,
         error_message=error_message,

@@ -10,7 +10,7 @@ from app.services.feedback import FeedbackService
 
 @pytest.mark.asyncio
 async def test_feedback_service_records_feedback_for_project_chunks():
-    project_id = uuid4()
+    application_id = uuid4()
     tenant_id = uuid4()
     chunk_id = uuid4()
     document_id = uuid4()
@@ -20,11 +20,11 @@ async def test_feedback_service_records_feedback_for_project_chunks():
             self.created = None
             self.committed = False
 
-        async def get_project(self, value):
-            assert value == project_id
-            return SimpleNamespace(id=project_id, tenant_id=tenant_id)
+        async def get_application(self, value):
+            assert value == application_id
+            return SimpleNamespace(id=application_id, tenant_id=tenant_id)
 
-        async def get_project_chunks(self, *, project_id, chunk_ids):
+        async def get_application_chunks(self, *, application_id, chunk_ids):
             assert chunk_ids == [chunk_id]
             return [SimpleNamespace(id=chunk_id, document_id=document_id)]
 
@@ -40,7 +40,7 @@ async def test_feedback_service_records_feedback_for_project_chunks():
 
     result = await service.create_feedback(
         FeedbackCreateRequest(rating="down", chunk_ids=[chunk_id], note="bad", query_hash="abc"),
-        project_id,
+        application_id,
     )
 
     assert result == {"status": "recorded", "rating": "down", "recorded_count": 1}
@@ -50,15 +50,15 @@ async def test_feedback_service_records_feedback_for_project_chunks():
 
 @pytest.mark.asyncio
 async def test_feedback_service_rejects_unknown_chunk_ids():
-    project_id = uuid4()
+    application_id = uuid4()
     tenant_id = uuid4()
     chunk_id = uuid4()
 
     class FakeRepo:
-        async def get_project(self, value):
-            return SimpleNamespace(id=project_id, tenant_id=tenant_id)
+        async def get_application(self, value):
+            return SimpleNamespace(id=application_id, tenant_id=tenant_id)
 
-        async def get_project_chunks(self, *, project_id, chunk_ids):
+        async def get_application_chunks(self, *, application_id, chunk_ids):
             return []
 
     service = FeedbackService(session=None, repository=FakeRepo())
@@ -66,7 +66,7 @@ async def test_feedback_service_rejects_unknown_chunk_ids():
     with pytest.raises(HTTPException) as exc_info:
         await service.create_feedback(
             FeedbackCreateRequest(rating="down", chunk_ids=[chunk_id]),
-            project_id,
+            application_id,
         )
 
     assert exc_info.value.status_code == 400

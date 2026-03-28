@@ -6,26 +6,26 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.db import RagEvaluationRun, RagEvaluationSample, RagProject
+from app.models.db import RagEvaluationRun, RagEvaluationSample, RagApplication
 
 
 class EvaluationRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_project(self, project_id: uuid.UUID) -> RagProject | None:
-        return await self.session.get(RagProject, project_id)
+    async def get_application(self, application_id: uuid.UUID) -> RagApplication | None:
+        return await self.session.get(RagApplication, application_id)
 
     async def create_run(
         self,
         *,
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
         tenant_id: uuid.UUID,
         dataset_name: str,
         sample_count: int,
     ) -> RagEvaluationRun:
         run = RagEvaluationRun(
-            project_id=project_id,
+            application_id=application_id,
             tenant_id=tenant_id,
             dataset_name=dataset_name,
             status="pending",

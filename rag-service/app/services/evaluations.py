@@ -30,14 +30,14 @@ class EvaluationService:
     async def create_run(
         self,
         payload: EvaluationCreateRequest,
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
     ) -> dict[str, object]:
-        project = await self.repository.get_project(project_id)
+        project = await self.repository.get_application(application_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
         run = await self.repository.create_run(
-            project_id=project.id,
+            application_id=project.id,
             tenant_id=project.tenant_id,
             dataset_name=payload.dataset_name,
             sample_count=len(payload.samples),
@@ -55,10 +55,10 @@ class EvaluationService:
             "sample_count": run.sample_count,
         }
 
-    async def get_run(self, run_id: str, project_id: uuid.UUID) -> dict[str, object]:
+    async def get_run(self, run_id: str, application_id: uuid.UUID) -> dict[str, object]:
         run_uuid = uuid.UUID(run_id)
         run = await self.repository.get_run(run_uuid)
-        if run is None or run.project_id != project_id:
+        if run is None or run.application_id != application_id:
             raise HTTPException(status_code=404, detail="Evaluation run not found")
         return {
             "run_id": str(run.id),
@@ -87,7 +87,7 @@ class EvaluationService:
 
         for sample in samples:
             try:
-                result = await self.query_service.answer_question(sample.question, run.project_id)
+                result = await self.query_service.answer_question(sample.question, run.application_id)
                 retrieved_context = self._join_retrieved_context(result.get("retrieval_context", []))
                 model_answer = str(result.get("answer", ""))
                 faithfulness = self._score_faithfulness(model_answer, retrieved_context)

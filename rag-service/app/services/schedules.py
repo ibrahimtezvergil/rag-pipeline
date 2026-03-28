@@ -83,9 +83,9 @@ class ScheduleService:
     async def create_schedule(
         self,
         payload: ScheduleCreateRequest,
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
     ) -> dict[str, str]:
-        project = await self.repository.get_project(project_id)
+        project = await self.repository.get_application(application_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
@@ -100,7 +100,7 @@ class ScheduleService:
         )
         source_ref = self._source_ref(payload.ingest)
         schedule = await self.repository.upsert_schedule(
-            project_id=project.id,
+            application_id=project.id,
             tenant_id=project.tenant_id,
             source_type=payload.ingest.source_type,
             source_ref=source_ref,
@@ -127,7 +127,7 @@ class ScheduleService:
             ingest_payload["mode"] = "async"
             await self.ingestion_service.create_ingestion_job(
                 IngestRequest.model_validate(ingest_payload),
-                schedule.project_id,
+                schedule.application_id,
             )
             await self.repository.mark_schedule_ran(
                 schedule,

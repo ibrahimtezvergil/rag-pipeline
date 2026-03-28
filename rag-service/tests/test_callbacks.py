@@ -46,7 +46,7 @@ async def test_send_ingestion_callback_posts_signed_json(monkeypatch):
         callback_url="https://example.com/callback",
         document_id="doc-1",
         ingestion_job_id="job-1",
-        project_id="project-1",
+        application_id="project-1",
         status="completed",
         source_type="web",
     )
@@ -75,7 +75,7 @@ async def test_send_ingestion_callback_returns_none_on_failure(monkeypatch):
         callback_url="https://example.com/callback",
         document_id="doc-1",
         ingestion_job_id="job-1",
-        project_id="project-1",
+        application_id="project-1",
         status="failed",
         source_type="web",
         error_message="boom",

@@ -30,6 +30,6 @@ def emit_event(event: str, payload: dict[str, object]) -> None:
         )
 
 
-def hash_query(*, question: str, tenant_id: str, project_id: str) -> str:
-    raw = f"{question}\n{tenant_id}\n{project_id}"
+def hash_query(*, question: str, tenant_id: str, application_id: str) -> str:
+    raw = f"{question}\n{tenant_id}\n{application_id}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()

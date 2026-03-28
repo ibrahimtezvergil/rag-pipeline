@@ -22,15 +22,15 @@ class FeedbackService:
     async def create_feedback(
         self,
         payload: FeedbackCreateRequest,
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
     ) -> dict[str, object]:
-        project = await self.repository.get_project(project_id)
+        project = await self.repository.get_application(application_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
         unique_chunk_ids = list(dict.fromkeys(payload.chunk_ids))
-        chunks = await self.repository.get_project_chunks(
-            project_id=project_id,
+        chunks = await self.repository.get_application_chunks(
+            application_id=application_id,
             chunk_ids=unique_chunk_ids,
         )
         if len(chunks) != len(unique_chunk_ids):
@@ -38,7 +38,7 @@ class FeedbackService:
 
         await self.repository.create_feedback_entries(
             tenant_id=project.tenant_id,
-            project_id=project.id,
+            application_id=project.id,
             chunks=chunks,
             rating=payload.rating,
             note=payload.note,

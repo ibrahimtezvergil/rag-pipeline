@@ -9,11 +9,11 @@ async def test_post_ingest_accepts_pdf_async(client, app, valid_headers):
     document_id = str(uuid4())
     job_id = str(uuid4())
 
-    async def create_ingestion_job(payload, project_id):
+    async def create_ingestion_job(payload, application_id):
         assert payload.source_type == "pdf"
         assert str(payload.source_ref) == "https://example.com/doc.pdf"
         assert payload.mode == "async"
-        assert str(project_id) == valid_headers["X-Project-ID"]
+        assert str(application_id) == valid_headers["X-Application-ID"]
         return {
             "document_id": document_id,
             "ingestion_job_id": job_id,
@@ -48,7 +48,7 @@ async def test_post_ingest_accepts_pdf_async(client, app, valid_headers):
 
 @pytest.mark.asyncio
 async def test_post_ingest_completes_web_sync(client, app, valid_headers):
-    async def create_ingestion_job(payload, project_id):
+    async def create_ingestion_job(payload, application_id):
         return {
             "document_id": str(uuid4()),
             "ingestion_job_id": str(uuid4()),
@@ -79,7 +79,7 @@ async def test_post_ingest_completes_web_sync(client, app, valid_headers):
 
 @pytest.mark.asyncio
 async def test_post_ingest_allows_mode_query_param_override(client, app, valid_headers):
-    async def create_ingestion_job(payload, project_id):
+    async def create_ingestion_job(payload, application_id):
         assert payload.mode == "sync"
         return {
             "document_id": str(uuid4()),
@@ -109,9 +109,9 @@ async def test_post_ingest_allows_mode_query_param_override(client, app, valid_h
 
 @pytest.mark.asyncio
 async def test_post_ingest_batch_accepts_multiple_items(client, app, valid_headers):
-    async def create_ingestion_batch(items, project_id):
+    async def create_ingestion_batch(items, application_id):
         assert len(items) == 2
-        assert str(project_id) == valid_headers["X-Project-ID"]
+        assert str(application_id) == valid_headers["X-Application-ID"]
         return [
             {
                 "document_id": str(uuid4()),
@@ -230,7 +230,7 @@ async def test_post_ingest_batch_rejects_sync_items(client, valid_headers):
 
 @pytest.mark.asyncio
 async def test_post_ingest_accepts_image_url_payload(client, app, valid_headers):
-    async def create_ingestion_job(payload, project_id):
+    async def create_ingestion_job(payload, application_id):
         assert payload.source_type == "image"
         assert str(payload.source_ref) == "https://example.com/image.png"
         assert payload.source_base64 is None
@@ -262,7 +262,7 @@ async def test_post_ingest_accepts_image_url_payload(client, app, valid_headers)
 
 @pytest.mark.asyncio
 async def test_post_ingest_accepts_base64_image_payload(client, app, valid_headers):
-    async def create_ingestion_job(payload, project_id):
+    async def create_ingestion_job(payload, application_id):
         assert payload.source_type == "image"
         assert payload.source_ref is None
         assert payload.source_base64 == "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
@@ -311,7 +311,7 @@ async def test_post_ingest_rejects_unsupported_source_type(client, valid_headers
 
 @pytest.mark.asyncio
 async def test_post_ingest_accepts_audio_url_payload(client, app, valid_headers):
-    async def create_ingestion_job(payload, project_id):
+    async def create_ingestion_job(payload, application_id):
         assert payload.source_type == "audio"
         assert str(payload.source_ref) == "https://example.com/audio.mp3"
         assert payload.source_base64 is None
@@ -345,7 +345,7 @@ async def test_post_ingest_accepts_audio_url_payload(client, app, valid_headers)
 
 @pytest.mark.asyncio
 async def test_post_ingest_accepts_base64_audio_payload(client, app, valid_headers):
-    async def create_ingestion_job(payload, project_id):
+    async def create_ingestion_job(payload, application_id):
         assert payload.source_type == "audio"
         assert payload.source_ref is None
         assert payload.source_base64 == "SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU2LjI2"
@@ -379,7 +379,7 @@ async def test_post_ingest_accepts_base64_audio_payload(client, app, valid_heade
 
 @pytest.mark.asyncio
 async def test_post_ingest_accepts_base64_pdf_payload(client, app, valid_headers):
-    async def create_ingestion_job(payload, project_id):
+    async def create_ingestion_job(payload, application_id):
         assert payload.source_type == "pdf"
         assert payload.source_ref is None
         assert payload.source_base64 == "UERG"
@@ -413,7 +413,7 @@ async def test_post_ingest_accepts_base64_pdf_payload(client, app, valid_headers
 
 @pytest.mark.asyncio
 async def test_post_ingest_accepts_db_sql_payload(client, app, valid_headers):
-    async def create_ingestion_job(payload, project_id):
+    async def create_ingestion_job(payload, application_id):
         assert payload.source_type == "db"
         assert payload.source_sql == "SELECT customer, plan FROM accounts"
         assert payload.source_ref is None
@@ -445,7 +445,7 @@ async def test_post_ingest_accepts_db_sql_payload(client, app, valid_headers):
 
 @pytest.mark.asyncio
 async def test_post_ingest_accepts_structured_records_payload(client, app, valid_headers):
-    async def create_ingestion_job(payload, project_id):
+    async def create_ingestion_job(payload, application_id):
         assert payload.source_type == "structured"
         assert payload.title == "CRM Customer Snapshot"
         assert payload.origin == "crm"

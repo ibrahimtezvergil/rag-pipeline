@@ -47,13 +47,13 @@ class ChatService:
     async def reply(
         self,
         message: str,
-        project_id,
+        application_id,
         session_id: str | None = None,
     ) -> dict[str, object]:
         active_session_id = session_id or str(uuid4())
         history = await self.store.get_history(active_session_id)
         contextual_question = self._build_contextual_question(message, history)
-        result = await self.query_service.answer_question(contextual_question, project_id)
+        result = await self.query_service.answer_question(contextual_question, application_id)
         await self.store.append_turns(
             active_session_id,
             [

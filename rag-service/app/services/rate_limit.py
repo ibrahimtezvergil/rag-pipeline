@@ -22,14 +22,14 @@ class RedisSlidingWindowRateLimiter:
     async def check(
         self,
         *,
-        project_id: str,
+        application_id: str,
         route_name: str,
         limit: int,
         window_seconds: int = 60,
         now: float | None = None,
     ) -> RateLimitResult:
         current = now if now is not None else time()
-        key = f"rate_limit:{project_id}:{route_name}"
+        key = f"rate_limit:{application_id}:{route_name}"
         window_start = current - window_seconds
         try:
             await self.redis.zremrangebyscore(key, 0, window_start)

@@ -29,8 +29,8 @@ class RedisQueryCache:
         except Exception:
             return None
 
-    async def set(self, *, cache_key: str, project_id: str, value: dict[str, Any]) -> None:
-        index_key = self._index_key(project_id)
+    async def set(self, *, cache_key: str, application_id: str, value: dict[str, Any]) -> None:
+        index_key = self._index_key(application_id)
         try:
             await self.redis.set(cache_key, json.dumps(value, sort_keys=True), ex=self.ttl_seconds)
             await self.redis.sadd(index_key, cache_key)
@@ -38,8 +38,8 @@ class RedisQueryCache:
         except Exception:
             return
 
-    async def invalidate_project(self, project_id: str) -> None:
-        index_key = self._index_key(project_id)
+    async def invalidate_application(self, application_id: str) -> None:
+        index_key = self._index_key(application_id)
         try:
             members = list(await self.redis.smembers(index_key))
             if members:
@@ -48,5 +48,5 @@ class RedisQueryCache:
         except Exception:
             return
 
-    def _index_key(self, project_id: str) -> str:
-        return f"query_cache:index:{project_id}"
+    def _index_key(self, application_id: str) -> str:
+        return f"query_cache:index:{application_id}"

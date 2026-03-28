@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models.db import RagDocument, RagProject
+from app.models.db import RagDocument, RagApplication
 from app.repositories.feedback import FeedbackRepository
 from app.repositories.ingestion import IngestionRepository
 from app.services.embedder import embed_query_text
@@ -50,7 +50,7 @@ class QueryService:
     async def answer_question(
         self,
         question: str,
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
         *,
         retrieval_mode: str = "hybrid",
         collections: list[str] | None = None,
@@ -64,7 +64,7 @@ class QueryService:
         snapshot_date: str | None = None,
         tags: list[str] | None = None,
     ) -> dict[str, object]:
-        project = await self.session.get(RagProject, project_id)
+        project = await self.session.get(RagApplication, application_id)
         query_started = perf_counter()
         retrieval_config = self._resolve_retrieval_config(
             project.config if project is not None else {},
@@ -80,12 +80,12 @@ class QueryService:
         query_hash_value = hash_query(
             question=question,
             tenant_id=str(project.tenant_id) if project is not None else "",
-            project_id=str(project_id),
+            application_id=str(application_id),
         )
         cache_key = self.query_cache.build_key(
             question=question,
             tenant_id=str(project.tenant_id) if project is not None else "",
-            project_id=str(project_id),
+            application_id=str(application_id),
             retrieval_mode=retrieval_mode,
             collections=collections,
             merge_strategy=merge_strategy,
@@ -106,7 +106,7 @@ class QueryService:
         update_current_observation(
             metadata={
                 "tenant_id": str(project.tenant_id) if project is not None else "",
-                "project_id": str(project_id),
+                "application_id": str(application_id),
                 "query_hash": query_hash_value,
                 "retrieval_mode": retrieval_mode,
                 "cache_hit": False,
@@ -124,7 +124,7 @@ class QueryService:
         target_collections = collections or [None]
         if retrieval_mode == "hybrid":
             dense_hits = await self._semantic_ranked_document_ids(
-                project_id,
+                application_id,
                 query_vector=list(query_embedding.get("values", [])),
                 scope_type=scope_type,
                 scope_id=scope_id,
@@ -135,7 +135,7 @@ class QueryService:
                 collections=target_collections,
             )
             sparse_hits = await self._sparse_ranked_document_ids(
-                project_id,
+                application_id,
                 question=retrieval_question,
                 scope_type=scope_type,
                 scope_id=scope_id,
@@ -150,7 +150,7 @@ class QueryService:
                 response_retrieval_mode = "hybrid_rrf"
         elif retrieval_mode == "sparse":
             ranked_document_ids, ranked_chunk_ids, chunk_scores = await self._sparse_ranked_document_ids(
-                project_id,
+                application_id,
                 question=retrieval_question,
                 scope_type=scope_type,
                 scope_id=scope_id,
@@ -164,7 +164,7 @@ class QueryService:
                 response_retrieval_mode = "sparse_qdrant"
         else:
             ranked_document_ids, ranked_chunk_ids, chunk_scores = await self._semantic_ranked_document_ids(
-                project_id,
+                application_id,
                 query_vector=list(query_embedding.get("values", [])),
                 scope_type=scope_type,
                 scope_id=scope_id,
@@ -177,7 +177,7 @@ class QueryService:
             if ranked_document_ids is not None:
                 response_retrieval_mode = "semantic_qdrant"
         documents = await self._get_indexed_documents(
-            project_id,
+            application_id,
             ranked_document_ids=ranked_document_ids,
             scope_type=scope_type,
             scope_id=scope_id,
@@ -206,7 +206,7 @@ class QueryService:
             }
             await self.query_cache.set(
                 cache_key=cache_key,
-                project_id=str(project_id),
+                application_id=str(application_id),
                 value=response,
             )
             return response
@@ -226,7 +226,7 @@ class QueryService:
         if reranked:
             reranker_ms = max(0, int((perf_counter() - rerank_started) * 1000))
         source_entries = await self._apply_feedback_loop(
-            project_id=project_id,
+            application_id=application_id,
             sources=source_entries,
         )
         source_entries = self._apply_negative_filters(
@@ -268,7 +268,7 @@ class QueryService:
             "query.completed",
             {
                 "tenant_id": str(project.tenant_id) if project is not None else "",
-                "project_id": str(project_id),
+                "application_id": str(application_id),
                 "query_hash": query_hash_value,
                 "retrieval_mode": final_retrieval_mode,
                 "reranker_ms": reranker_ms,
@@ -304,7 +304,7 @@ class QueryService:
         }
         await self.query_cache.set(
             cache_key=cache_key,
-            project_id=str(project_id),
+            application_id=str(application_id),
             value=response,
         )
         return response
@@ -312,7 +312,7 @@ class QueryService:
     async def _apply_feedback_loop(
         self,
         *,
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
         sources: list[dict[str, object]],
     ) -> list[dict[str, object]]:
         chunk_ids: list[uuid.UUID] = []
@@ -325,7 +325,7 @@ class QueryService:
             except (TypeError, ValueError):
                 continue
         feedback_summary = await self.feedback_repository.get_feedback_summary(
-            project_id=project_id,
+            application_id=application_id,
             chunk_ids=chunk_ids,
         )
         if not feedback_summary:
@@ -374,7 +374,7 @@ class QueryService:
 
     async def _get_indexed_documents(
         self,
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
         *,
         ranked_document_ids: list[uuid.UUID] | None = None,
         scope_type: str | None = None,
@@ -384,7 +384,7 @@ class QueryService:
         tags: list[str] | None = None,
     ) -> list[RagDocument]:
         query = select(RagDocument).where(
-            RagDocument.project_id == project_id,
+            RagDocument.application_id == application_id,
             RagDocument.status == "indexed",
         )
         if ranked_document_ids is not None:
@@ -433,7 +433,7 @@ class QueryService:
 
     async def _semantic_ranked_document_ids(
         self,
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
         *,
         query_vector: list[float],
         scope_type: str | None,
@@ -444,7 +444,7 @@ class QueryService:
         acl: list[str] | None,
         collections: list[str | None],
     ) -> tuple[list[uuid.UUID] | None, list[uuid.UUID] | None, dict[uuid.UUID, float]]:
-        project = await self.session.get(RagProject, project_id)
+        project = await self.session.get(RagApplication, application_id)
         if project is None:
             return [], [], {}
 
@@ -525,7 +525,7 @@ class QueryService:
 
     async def _sparse_ranked_document_ids(
         self,
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
         *,
         question: str,
         scope_type: str | None,
@@ -536,7 +536,7 @@ class QueryService:
         acl: list[str] | None,
         collections: list[str | None],
     ) -> tuple[list[uuid.UUID] | None, list[uuid.UUID] | None, dict[uuid.UUID, float]]:
-        project = await self.session.get(RagProject, project_id)
+        project = await self.session.get(RagApplication, application_id)
         if project is None:
             return [], [], {}
 
