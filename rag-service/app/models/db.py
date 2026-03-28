@@ -34,8 +34,8 @@ class RagTenant(Base):
     )
 
 
-class RagProject(Base):
-    __tablename__ = "rag_projects"
+class RagApplication(Base):
+    __tablename__ = "rag_applications"
 
     id: Mapped[uuid.UUID] = uuid_column()
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -206,6 +206,10 @@ class TenantSecret(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), default=utc_now, nullable=False
     )
+
+
+# Temporary compatibility alias. Full internal rename will remove this.
+RagProject = RagApplication
 
 
 class RagEvaluationRun(Base):
