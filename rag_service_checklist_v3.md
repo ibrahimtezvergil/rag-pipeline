@@ -6,6 +6,16 @@
 
 ---
 
+## Terminology Refactor Note — 2026-03-28
+
+- Karar: domain dili `project` yerine `application` olarak refactor edilecek.
+- Neden: mevcut ürün modelinde `tenant = şirket`, `application = CRM / Diet / Support instance`, `user = tenant içi kullanıcı`, `knowledge_scope = application içi alt veri alanı`. `project` adı bu modeli yanlış temsil ediyor ve `application` ile `scope` kavramlarını karıştırıyor.
+- Planlanan refactor kapsamı: `rag_projects -> rag_applications`, `RagProject -> RagApplication`, `project_id -> application_id`, `X-Project-ID -> X-Application-ID`, cache/rate-limit/observability ve dokümantasyon yüzeyi.
+- Geçiş stratejisi: dış API'de `X-Application-ID` ana header olacak; `X-Project-ID` kısa süreli deprecated fallback olarak kabul edilecek. İç kod ve DB modeli yalnızca `application` dili kullanacak.
+- Spec: `docs/superpowers/specs/2026-03-28-application-domain-refactor-design.md`
+
+---
+
 ## P1 — Core Altyapı (Servis çalışmadan önce tamamlanmalı)
 
 ### Proje İskeleti
