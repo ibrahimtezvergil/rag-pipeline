@@ -8,6 +8,108 @@ from app.api import query as query_api_module
 
 
 @pytest.mark.asyncio
+async def test_post_evaluations_creates_run(client, app, valid_headers):
+    async def create_run(payload, project_id):
+        assert payload.dataset_name == "smoke-set"
+        assert len(payload.samples) == 1
+        assert payload.samples[0].question == "Which invoice was paid?"
+        assert str(project_id) == valid_headers["X-Project-ID"]
+        return {
+            "run_id": str(uuid4()),
+            "status": "pending",
+            "dataset_name": "smoke-set",
+            "sample_count": 1,
+        }
+
+    app.state.evaluation_service = SimpleNamespace(create_run=create_run)
+
+    response = await client.post(
+        "/evaluations",
+        headers=valid_headers,
+        json={
+            "dataset_name": "smoke-set",
+            "samples": [
+                {
+                    "question": "Which invoice was paid?",
+                    "ground_truth": "INV-1001 was paid.",
+                    "reference_context": "Invoice INV-1001 status is paid.",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "pending"
+    assert response.json()["dataset_name"] == "smoke-set"
+    assert response.json()["sample_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_evaluation_returns_run_status(client, app, valid_headers):
+    run_id = str(uuid4())
+
+    async def get_run(run_id_arg, project_id):
+        assert run_id_arg == run_id
+        assert str(project_id) == valid_headers["X-Project-ID"]
+        return {
+            "run_id": run_id,
+            "status": "completed",
+            "dataset_name": "smoke-set",
+            "sample_count": 2,
+            "completed_count": 2,
+            "faithfulness_avg": 0.8,
+            "answer_relevancy_avg": 0.85,
+            "context_recall_avg": 0.75,
+        }
+
+    app.state.evaluation_service = SimpleNamespace(get_run=get_run)
+
+    response = await client.get(
+        f"/evaluations/{run_id}",
+        headers=valid_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["run_id"] == run_id
+    assert response.json()["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_post_feedback_records_chunk_feedback(client, app, valid_headers):
+    chunk_id = str(uuid4())
+
+    async def create_feedback(payload, project_id):
+        assert payload.rating == "down"
+        assert [str(item) for item in payload.chunk_ids] == [chunk_id]
+        assert payload.note == "Yanlis kaynak"
+        assert str(project_id) == valid_headers["X-Project-ID"]
+        return {
+            "status": "recorded",
+            "rating": "down",
+            "recorded_count": 1,
+        }
+
+    app.state.feedback_service = SimpleNamespace(create_feedback=create_feedback)
+
+    response = await client.post(
+        "/feedback",
+        headers=valid_headers,
+        json={
+            "rating": "down",
+            "chunk_ids": [chunk_id],
+            "note": "Yanlis kaynak",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json() == {
+        "status": "recorded",
+        "rating": "down",
+        "recorded_count": 1,
+    }
+
+
+@pytest.mark.asyncio
 async def test_post_schedules_creates_schedule(client, app, valid_headers):
     async def create_schedule(payload, project_id):
         assert payload.cron_expr == "*/30 * * * *"

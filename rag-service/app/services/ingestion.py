@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.repositories.ingestion import IngestionRepository
 from app.schemas.ingest import IngestRequest
+from app.services.audio_metadata import extract_audio_metadata
 from app.services.chunking import build_chunks
 from app.services.dispatch import IngestionDispatcher, NullIngestionDispatcher
 from app.services.embedder import (
@@ -74,6 +75,7 @@ class IngestionService:
                 **({"title": payload.title} if payload.title else {}),
                 **({"records": payload.records} if payload.records else {}),
                 **({"cursor_state": payload.cursor_state} if payload.cursor_state else {}),
+                **({"callback_url": str(payload.callback_url)} if payload.callback_url else {}),
                 **({"origin": payload.origin} if payload.origin else {}),
                 **({"scope_type": payload.scope_type} if payload.scope_type else {}),
                 **({"scope_id": payload.scope_id} if payload.scope_id else {}),
@@ -125,6 +127,7 @@ class IngestionService:
                     "project_id": str(project.id),
                     "source_type": payload.source_type,
                     "source_ref": self._source_ref(payload),
+                    **({"callback_url": str(payload.callback_url)} if payload.callback_url else {}),
                 }
             )
 
@@ -314,6 +317,7 @@ class IngestionService:
                 "source_sql": metadata.get("source_sql"),
                 "title": metadata.get("title") or document.title,
                 "records": metadata.get("records"),
+                "callback_url": metadata.get("callback_url"),
                 "origin": metadata.get("origin"),
                 "scope_type": metadata.get("scope_type"),
                 "scope_id": metadata.get("scope_id"),
@@ -439,7 +443,13 @@ class IngestionService:
             loaded,
             previous_child_snapshot=previous_child_snapshot,
         )
+        document_metadata["loader"] = loaded["metadata"]
+        if loaded["metadata"].get("audio_metadata") is not None:
+            document_metadata["audio_metadata"] = loaded["metadata"]["audio_metadata"]
         chunks = await self.repository.create_chunks(chunk_rows)
+        update_related_chunk_ids = getattr(self.repository, "update_related_chunk_ids", None)
+        if update_related_chunk_ids is not None:
+            await update_related_chunk_ids(self._build_related_chunk_map(chunks))
         vector_chunks = [chunks[index] for index in vector_chunk_indices]
         vector_rows = [chunk_rows[index] for index in vector_chunk_indices]
         embed_ms = max(0, int((monotonic() - started) * 1000))
@@ -509,6 +519,35 @@ class IngestionService:
         await self._update_sync_checkpoint(document)
         await self._supersede_previous_document(document.previous_document_id)
         await self.query_cache.invalidate_project(str(document.project_id))
+
+    def _build_related_chunk_map(self, chunks) -> dict[uuid.UUID, list[uuid.UUID]]:
+        child_chunks = [chunk for chunk in chunks if getattr(chunk, "parent_chunk_id", None) is not None]
+        by_parent: dict[uuid.UUID, list[object]] = {}
+        by_section: dict[str, list[object]] = {}
+        for chunk in sorted(child_chunks, key=lambda item: int(item.chunk_index)):
+            by_parent.setdefault(chunk.parent_chunk_id, []).append(chunk)
+            section_title = str(getattr(chunk, "section_title", "") or "").strip().lower()
+            if section_title:
+                by_section.setdefault(section_title, []).append(chunk)
+
+        relation_map: dict[uuid.UUID, list[uuid.UUID]] = {}
+        for chunk in child_chunks:
+            related_ids: list[uuid.UUID] = []
+            siblings = by_parent.get(chunk.parent_chunk_id, [])
+            for sibling in siblings:
+                if sibling.id == chunk.id:
+                    continue
+                if abs(int(sibling.chunk_index) - int(chunk.chunk_index)) <= 1 and sibling.id not in related_ids:
+                    related_ids.append(sibling.id)
+            section_title = str(getattr(chunk, "section_title", "") or "").strip().lower()
+            if section_title:
+                for related in by_section.get(section_title, []):
+                    if related.id == chunk.id or related.id in related_ids:
+                        continue
+                    related_ids.append(related.id)
+            if related_ids:
+                relation_map[chunk.id] = related_ids[:2]
+        return relation_map
 
     async def _get_job_with_document(self, job_id: str):
         job_uuid = self._parse_uuid(job_id, "Invalid ingestion job id")
@@ -581,11 +620,16 @@ class IngestionService:
             vector_chunk_indices: list[int] = []
             audio_bytes = loaded["audio_bytes"]
             mime_type = str(metadata["mime_type"])
+            metadata["audio_metadata"] = await self._extract_audio_metadata(
+                audio_bytes=audio_bytes,
+                filename=title,
+            )
             for clip in list(metadata.get("clips") or []):
                 clip_label = f"{title} clip {clip['clip_index'] + 1}"
-                clip_summary = (
-                    f"{title} clip {clip['clip_index'] + 1} "
-                    f"({clip['start_second']}-{clip['end_second']}s)"
+                clip_summary = self._audio_clip_content(
+                    title=title,
+                    clip=clip,
+                    audio_metadata=dict(metadata.get("audio_metadata") or {}),
                 )
                 parent_index = len(chunk_rows)
                 chunk_rows.append(
@@ -796,3 +840,60 @@ class IngestionService:
         )
         await self.repository.upsert_sync_checkpoint(source_connector_id, cursor_state)
         await self.repository.commit()
+
+    async def _extract_audio_metadata(
+        self,
+        *,
+        audio_bytes: bytes,
+        filename: str,
+    ) -> dict[str, object]:
+        settings = get_settings()
+        if not settings.audio_metadata_enabled:
+            return {
+                "status": "unavailable",
+                "provider": "disabled",
+                "transcript": None,
+                "segments": [],
+            }
+        try:
+            metadata = await extract_audio_metadata(audio_bytes, filename=filename)
+        except Exception:
+            return {
+                "status": "error",
+                "provider": "whisper",
+                "transcript": None,
+                "segments": [],
+            }
+        if not isinstance(metadata, dict):
+            return {
+                "status": "unavailable",
+                "provider": "whisper",
+                "transcript": None,
+                "segments": [],
+            }
+        return {
+            "status": metadata.get("status", "unavailable"),
+            "provider": metadata.get("provider", "whisper"),
+            "transcript": metadata.get("transcript"),
+            "segments": list(metadata.get("segments", [])),
+        }
+
+    def _audio_clip_content(
+        self,
+        *,
+        title: str,
+        clip: dict[str, object],
+        audio_metadata: dict[str, object],
+    ) -> str:
+        start_second = int(clip["start_second"])
+        end_second = int(clip["end_second"])
+        segments = [
+            segment
+            for segment in list(audio_metadata.get("segments") or [])
+            if int(segment.get("start_second", -1)) < end_second
+            and int(segment.get("end_second", -1)) > start_second
+            and str(segment.get("text", "")).strip()
+        ]
+        if segments:
+            return " ".join(str(segment["text"]).strip() for segment in segments)
+        return f"{title} clip {int(clip['clip_index']) + 1} ({start_second}-{end_second}s)"

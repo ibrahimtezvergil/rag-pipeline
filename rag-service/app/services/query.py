@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.db import RagDocument, RagProject
+from app.repositories.feedback import FeedbackRepository
 from app.repositories.ingestion import IngestionRepository
 from app.services.embedder import embed_query_text
 from app.services.llm import generate as generate_text
@@ -33,10 +34,12 @@ class QueryService:
         reranker: CohereRerankerService | None = None,
         query_expansion: QueryExpansionService | None = None,
         query_cache: RedisQueryCache | None = None,
+        feedback_repository: FeedbackRepository | None = None,
         vector_store_factory=None,
     ):
         self.session = session
         self.repository = IngestionRepository(session)
+        self.feedback_repository = feedback_repository or FeedbackRepository(session)
         self.vector_store = vector_store or QdrantVectorStore()
         self.reranker = reranker or CohereRerankerService()
         self.query_expansion = query_expansion or QueryExpansionService()
@@ -112,6 +115,12 @@ class QueryService:
         response_retrieval_mode = "metadata_fallback"
         reranker_ms: int | None = None
         llm_ms: int | None = None
+        latency_budget_ms = self._resolve_budget_int(project_config.get("latency_budget_ms"))
+        token_budget = self._resolve_budget_int(project_config.get("token_budget"))
+        remaining_budget_ms: int | None = None
+        latency_budget_hit = False
+        token_trimmed = False
+        prompt_estimated_tokens: int | None = None
         target_collections = collections or [None]
         if retrieval_mode == "hybrid":
             dense_hits = await self._semantic_ranked_document_ids(
@@ -216,6 +225,10 @@ class QueryService:
         )
         if reranked:
             reranker_ms = max(0, int((perf_counter() - rerank_started) * 1000))
+        source_entries = await self._apply_feedback_loop(
+            project_id=project_id,
+            sources=source_entries,
+        )
         source_entries = self._apply_negative_filters(
             source_entries,
             exclude_sources=exclude_sources,
@@ -226,13 +239,26 @@ class QueryService:
         confidence_score, confidence_warning = self._build_confidence(final_sources)
         answer = ""
         if final_sources:
+            prompt_sources, token_trimmed = self._apply_token_budget(
+                final_sources,
+                token_budget=token_budget,
+            )
+            prompt_estimated_tokens = self._estimate_prompt_tokens(question=question, sources=prompt_sources)
+            remaining_budget_ms = self._remaining_budget_ms(
+                query_started=query_started,
+                latency_budget_ms=latency_budget_ms,
+            )
             try:
-                llm_started = perf_counter()
-                prompt = build_query_answer_prompt(question=question, sources=final_sources)
-                answer = await generate_text(prompt)
-                llm_ms = max(0, int((perf_counter() - llm_started) * 1000))
+                if self._should_skip_generate(remaining_budget_ms):
+                    latency_budget_hit = True
+                    answer = self._fallback_answer(prompt_sources)
+                else:
+                    llm_started = perf_counter()
+                    prompt = build_query_answer_prompt(question=question, sources=prompt_sources)
+                    answer = await generate_text(prompt)
+                    llm_ms = max(0, int((perf_counter() - llm_started) * 1000))
             except Exception:
-                answer = self._fallback_answer(final_sources)
+                answer = self._fallback_answer(prompt_sources)
         if not answer:
             titles = ", ".join(str(source.get("title", "")) for source in final_sources)
             answer = f"Ilgili indexed kaynaklar: {titles}"
@@ -249,6 +275,12 @@ class QueryService:
                 "llm_ms": llm_ms,
                 "top_chunk_score": final_sources[0].get("score") if final_sources else None,
                 "source_count": len(final_sources),
+                "latency_budget_ms": latency_budget_ms,
+                "latency_budget_hit": latency_budget_hit,
+                "remaining_budget_ms": remaining_budget_ms,
+                "token_budget": token_budget,
+                "token_trimmed": token_trimmed,
+                "prompt_estimated_tokens": prompt_estimated_tokens,
                 "duration_ms": max(0, int((perf_counter() - query_started) * 1000)),
             },
         )
@@ -257,6 +289,8 @@ class QueryService:
                 "source_count": len(final_sources),
                 "final_retrieval_mode": final_retrieval_mode,
                 "confidence_score": confidence_score,
+                "latency_budget_hit": latency_budget_hit,
+                "token_trimmed": token_trimmed,
             }
         )
 
@@ -274,6 +308,69 @@ class QueryService:
             value=response,
         )
         return response
+
+    async def _apply_feedback_loop(
+        self,
+        *,
+        project_id: uuid.UUID,
+        sources: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        chunk_ids: list[uuid.UUID] = []
+        for source in sources:
+            raw_chunk_id = source.get("chunk_id")
+            if raw_chunk_id is None:
+                continue
+            try:
+                chunk_ids.append(uuid.UUID(str(raw_chunk_id)))
+            except (TypeError, ValueError):
+                continue
+        feedback_summary = await self.feedback_repository.get_feedback_summary(
+            project_id=project_id,
+            chunk_ids=chunk_ids,
+        )
+        if not feedback_summary:
+            return sources
+
+        adjusted_sources: list[dict[str, object]] = []
+        for source in sources:
+            adjusted = dict(source)
+            raw_chunk_id = adjusted.get("chunk_id")
+            summary = None
+            if raw_chunk_id is not None:
+                try:
+                    summary = feedback_summary.get(uuid.UUID(str(raw_chunk_id)))
+                except (TypeError, ValueError):
+                    summary = None
+            if summary is not None:
+                adjusted["score"] = self._adjust_feedback_score(
+                    adjusted.get("score"),
+                    upvotes=int(summary.get("up", 0)),
+                    downvotes=int(summary.get("down", 0)),
+                )
+            adjusted_sources.append(adjusted)
+        return sorted(
+            adjusted_sources,
+            key=lambda source: float(source.get("score") or 0.0),
+            reverse=True,
+        )
+
+    def _adjust_feedback_score(
+        self,
+        score: object,
+        *,
+        upvotes: int,
+        downvotes: int,
+    ) -> float | None:
+        if score is None:
+            return None
+        adjusted = float(score)
+        negative_excess = max(downvotes - upvotes, 0)
+        positive_excess = max(upvotes - downvotes, 0)
+        if negative_excess:
+            adjusted -= min(0.6, 0.15 * negative_excess)
+        elif positive_excess:
+            adjusted += min(0.15, 0.05 * positive_excess)
+        return adjusted
 
     async def _get_indexed_documents(
         self,
@@ -562,6 +659,21 @@ class QueryService:
             if parent_ids:
                 parents = await self.repository.get_chunks_by_ids(parent_ids)
                 parent_map = {chunk.id: chunk for chunk in parents}
+            related_ids: list[uuid.UUID] = []
+            for chunk in chunks:
+                for related_chunk_id in getattr(chunk, "related_chunk_ids", []) or []:
+                    try:
+                        parsed_related_id = uuid.UUID(str(related_chunk_id))
+                    except ValueError:
+                        continue
+                    if parsed_related_id not in related_ids:
+                        related_ids.append(parsed_related_id)
+            related_map = {}
+            if related_ids:
+                related_chunks = await self.repository.get_chunks_by_ids(related_ids)
+                related_map = {chunk.id: chunk for chunk in related_chunks}
+        else:
+            related_map = {}
 
         sources: list[dict[str, object]] = []
         used_document_ids: set[uuid.UUID] = set()
@@ -593,8 +705,28 @@ class QueryService:
                 if matching_chunk.parent_chunk_id is not None and matching_chunk.parent_chunk_id in parent_map:
                     entry["resolved_chunk_id"] = str(matching_chunk.parent_chunk_id)
                     entry["parent_context"] = (parent_map[matching_chunk.parent_chunk_id].content or "").strip()
+                entry["related_chunks"] = self._build_related_chunk_metadata(matching_chunk, related_map)
             sources.append(entry)
         return sources
+
+    def _build_related_chunk_metadata(self, chunk, related_map: dict[uuid.UUID, object]) -> list[dict[str, str | None]]:
+        related_chunks: list[dict[str, str | None]] = []
+        for related_chunk_id in getattr(chunk, "related_chunk_ids", []) or []:
+            try:
+                parsed_related_id = uuid.UUID(str(related_chunk_id))
+            except ValueError:
+                continue
+            related_chunk = related_map.get(parsed_related_id)
+            if related_chunk is None:
+                continue
+            related_chunks.append(
+                {
+                    "chunk_id": str(related_chunk.id),
+                    "section_title": getattr(related_chunk, "section_title", None),
+                    "snippet": str(getattr(related_chunk, "content", "") or "").strip()[:200],
+                }
+            )
+        return related_chunks
 
     async def _maybe_rerank_sources(
         self,
@@ -660,6 +792,85 @@ class QueryService:
                     if key in mode_overrides:
                         resolved[key] = mode_overrides[key]
         return resolved
+
+    def _resolve_budget_int(self, raw_value: object) -> int | None:
+        if raw_value is None:
+            return None
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            return None
+        if value <= 0:
+            return None
+        return value
+
+    def _remaining_budget_ms(
+        self,
+        *,
+        query_started: float,
+        latency_budget_ms: int | None,
+    ) -> int | None:
+        if latency_budget_ms is None:
+            return None
+        elapsed_ms = int((perf_counter() - query_started) * 1000)
+        return latency_budget_ms - elapsed_ms
+
+    def _should_skip_generate(self, remaining_budget_ms: int | None) -> bool:
+        if remaining_budget_ms is None:
+            return False
+        return remaining_budget_ms < 250
+
+    def _apply_token_budget(
+        self,
+        source_entries: list[dict[str, object]],
+        *,
+        token_budget: int | None,
+    ) -> tuple[list[dict[str, object]], bool]:
+        if token_budget is None or not source_entries:
+            return source_entries, False
+
+        trimmed_sources = [dict(source) for source in source_entries]
+        trimmed = False
+        while len(trimmed_sources) > 1 and self._estimate_sources_tokens(trimmed_sources) > token_budget:
+            trimmed_sources = trimmed_sources[:1]
+            trimmed = True
+
+        if self._estimate_sources_tokens(trimmed_sources) <= token_budget:
+            return trimmed_sources, trimmed
+
+        for source in trimmed_sources:
+            parent_context = str(source.get("parent_context", ""))
+            snippet = str(source.get("snippet", ""))
+            while self._estimate_sources_tokens(trimmed_sources) > token_budget and parent_context:
+                parent_context = parent_context[: max(0, len(parent_context) // 2)]
+                source["parent_context"] = parent_context
+                trimmed = True
+            while self._estimate_sources_tokens(trimmed_sources) > token_budget and snippet:
+                snippet = snippet[: max(0, len(snippet) // 2)]
+                source["snippet"] = snippet
+                trimmed = True
+        return trimmed_sources, trimmed
+
+    def _estimate_sources_tokens(self, source_entries: list[dict[str, object]]) -> int:
+        total_chars = 0
+        for source in source_entries:
+            total_chars += len(str(source.get("title", "")))
+            total_chars += len(str(source.get("snippet", "")))
+            total_chars += len(str(source.get("parent_context", "")))
+        return max(1, total_chars // 4) if total_chars else 0
+
+    def _estimate_prompt_tokens(
+        self,
+        *,
+        question: str,
+        sources: list[dict[str, object]],
+    ) -> int:
+        return max(1, (len(question) + sum(
+            len(str(source.get("title", ""))) +
+            len(str(source.get("snippet", ""))) +
+            len(str(source.get("parent_context", "")))
+            for source in sources
+        )) // 4)
 
     def _apply_score_threshold(
         self,

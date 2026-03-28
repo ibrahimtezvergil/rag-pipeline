@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     query_expansion_use_llm: bool = False
     query_expansion_max_terms: int = 5
     semantic_dedup_similarity_threshold: float = 0.97
+    audio_metadata_enabled: bool = True
+    audio_diarization_enabled: bool = False
+    ingest_callback_secret: str = "development-callback-secret"
     pgbouncer_default_pool_size: int = 20
     pgbouncer_max_client_conn: int = 50
     pgbouncer_reserve_pool_size: int = 5

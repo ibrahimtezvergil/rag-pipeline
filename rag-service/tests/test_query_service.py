@@ -864,6 +864,7 @@ async def test_query_service_builds_sources_from_retrieved_chunk_content(
             "parent_context": "Parent chunk content.",
             "score": 0.98,
             "acl": [],
+            "related_chunks": [],
         }
     ]
 
@@ -1754,6 +1755,249 @@ async def test_query_service_uses_original_question_for_answer_prompt(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_query_service_skips_llm_when_latency_budget_is_exhausted(monkeypatch):
+    events: list[tuple[str, dict[str, object]]] = []
+
+    class FakeProject:
+        tenant_id = UUID("00000000-0000-0000-0000-000000000001")
+        config = {"latency_budget_ms": 100}
+
+    class FakeDocument:
+        id = UUID("00000000-0000-0000-0000-000000000010")
+        title = "Doc"
+        source_ref = "inline://doc"
+        metadata_json = {"content_text": "budget context"}
+
+    class FakeSession:
+        async def get(self, model, project_id):
+            return FakeProject()
+
+    class NoopCache:
+        def build_key(self, **kwargs):
+            return "noop"
+
+        async def get(self, key):
+            return None
+
+        async def set(self, **kwargs):
+            return None
+
+    async def fake_embed_query_text(question: str):
+        return {"values": [0.1, 0.2]}
+
+    async def fake_semantic_ranked_document_ids(self, project_id, **kwargs):
+        return None, None, {}
+
+    async def fake_sparse_ranked_document_ids(self, project_id, **kwargs):
+        return None, None, {}
+
+    async def fake_get_indexed_documents(self, *args, **kwargs):
+        return [FakeDocument()]
+
+    async def fake_build_sources(self, question, documents, ranked_chunk_ids, chunk_scores):
+        return [
+            {
+                "document_id": str(FakeDocument.id),
+                "title": "Doc",
+                "source_ref": "inline://doc",
+                "snippet": "budget snippet",
+                "parent_context": "budget parent context",
+                "score": 0.9,
+            }
+        ]
+
+    async def fail_generate(prompt: str) -> str:
+        raise AssertionError("generate should not run when latency budget is exhausted")
+
+    perf_values = iter([0.0, 0.25, 0.26, 0.27, 0.28, 0.29])
+
+    monkeypatch.setattr(query_module, "embed_query_text", fake_embed_query_text, raising=False)
+    monkeypatch.setattr(QueryService, "_semantic_ranked_document_ids", fake_semantic_ranked_document_ids)
+    monkeypatch.setattr(QueryService, "_sparse_ranked_document_ids", fake_sparse_ranked_document_ids)
+    monkeypatch.setattr(QueryService, "_get_indexed_documents", fake_get_indexed_documents)
+    monkeypatch.setattr(QueryService, "_build_sources", fake_build_sources)
+    monkeypatch.setattr(query_module, "generate_text", fail_generate, raising=False)
+    monkeypatch.setattr(query_module, "emit_event", lambda event, payload: events.append((event, payload)), raising=False)
+    monkeypatch.setattr(query_module, "perf_counter", lambda: next(perf_values), raising=False)
+
+    service = QueryService(FakeSession(), query_cache=NoopCache())
+    result = await service.answer_question("invoice", UUID("00000000-0000-0000-0000-000000000002"))
+
+    assert "budget parent context" in result["answer"]
+    assert events[0][1]["latency_budget_ms"] == 100
+    assert events[0][1]["latency_budget_hit"] is True
+
+
+@pytest.mark.asyncio
+async def test_query_service_trims_prompt_to_token_budget(monkeypatch):
+    captured: dict[str, object] = {}
+    events: list[tuple[str, dict[str, object]]] = []
+
+    class FakeProject:
+        tenant_id = UUID("00000000-0000-0000-0000-000000000001")
+        config = {"token_budget": 20}
+
+    class FakeDocument:
+        id = UUID("00000000-0000-0000-0000-000000000010")
+        title = "Doc"
+        source_ref = "inline://doc"
+        metadata_json = {"content_text": "budget context"}
+
+    class FakeSession:
+        async def get(self, model, project_id):
+            return FakeProject()
+
+    class NoopCache:
+        def build_key(self, **kwargs):
+            return "noop"
+
+        async def get(self, key):
+            return None
+
+        async def set(self, **kwargs):
+            return None
+
+    async def fake_embed_query_text(question: str):
+        return {"values": [0.1, 0.2]}
+
+    async def fake_semantic_ranked_document_ids(self, project_id, **kwargs):
+        return None, None, {}
+
+    async def fake_sparse_ranked_document_ids(self, project_id, **kwargs):
+        return None, None, {}
+
+    async def fake_get_indexed_documents(self, *args, **kwargs):
+        return [FakeDocument()]
+
+    async def fake_build_sources(self, question, documents, ranked_chunk_ids, chunk_scores):
+        return [
+            {
+                "document_id": str(FakeDocument.id),
+                "title": "Doc 1",
+                "source_ref": "inline://doc-1",
+                "snippet": "a" * 120,
+                "parent_context": "b" * 120,
+                "score": 0.9,
+            },
+            {
+                "document_id": str(UUID("00000000-0000-0000-0000-000000000011")),
+                "title": "Doc 2",
+                "source_ref": "inline://doc-2",
+                "snippet": "c" * 120,
+                "parent_context": "d" * 120,
+                "score": 0.8,
+            },
+        ]
+
+    def fake_build_query_answer_prompt(*, question: str, sources: list[dict[str, object]]) -> str:
+        captured["sources"] = sources
+        return "PROMPT"
+
+    async def fake_generate(prompt: str) -> str:
+        return "answer"
+
+    monkeypatch.setattr(query_module, "embed_query_text", fake_embed_query_text, raising=False)
+    monkeypatch.setattr(QueryService, "_semantic_ranked_document_ids", fake_semantic_ranked_document_ids)
+    monkeypatch.setattr(QueryService, "_sparse_ranked_document_ids", fake_sparse_ranked_document_ids)
+    monkeypatch.setattr(QueryService, "_get_indexed_documents", fake_get_indexed_documents)
+    monkeypatch.setattr(QueryService, "_build_sources", fake_build_sources)
+    monkeypatch.setattr(query_module, "build_query_answer_prompt", fake_build_query_answer_prompt, raising=False)
+    monkeypatch.setattr(query_module, "generate_text", fake_generate, raising=False)
+    monkeypatch.setattr(query_module, "emit_event", lambda event, payload: events.append((event, payload)), raising=False)
+
+    service = QueryService(FakeSession(), query_cache=NoopCache())
+    result = await service.answer_question("invoice", UUID("00000000-0000-0000-0000-000000000002"))
+
+    prompt_sources = captured["sources"]
+    assert len(prompt_sources) == 1
+    assert len(prompt_sources[0]["snippet"]) < 120
+    assert events[0][1]["token_budget"] == 20
+    assert events[0][1]["token_trimmed"] is True
+    assert result["answer"] == "answer"
+
+
+@pytest.mark.asyncio
+async def test_query_service_keeps_full_prompt_when_token_budget_missing(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeProject:
+        tenant_id = UUID("00000000-0000-0000-0000-000000000001")
+        config = {}
+
+    class FakeDocument:
+        id = UUID("00000000-0000-0000-0000-000000000010")
+        title = "Doc"
+        source_ref = "inline://doc"
+        metadata_json = {"content_text": "budget context"}
+
+    class FakeSession:
+        async def get(self, model, project_id):
+            return FakeProject()
+
+    class NoopCache:
+        def build_key(self, **kwargs):
+            return "noop"
+
+        async def get(self, key):
+            return None
+
+        async def set(self, **kwargs):
+            return None
+
+    async def fake_embed_query_text(question: str):
+        return {"values": [0.1, 0.2]}
+
+    async def fake_semantic_ranked_document_ids(self, project_id, **kwargs):
+        return None, None, {}
+
+    async def fake_sparse_ranked_document_ids(self, project_id, **kwargs):
+        return None, None, {}
+
+    async def fake_get_indexed_documents(self, *args, **kwargs):
+        return [FakeDocument()]
+
+    async def fake_build_sources(self, question, documents, ranked_chunk_ids, chunk_scores):
+        return [
+            {
+                "document_id": str(FakeDocument.id),
+                "title": "Doc 1",
+                "source_ref": "inline://doc-1",
+                "snippet": "a" * 80,
+                "parent_context": "b" * 80,
+                "score": 0.9,
+            },
+            {
+                "document_id": str(UUID("00000000-0000-0000-0000-000000000011")),
+                "title": "Doc 2",
+                "source_ref": "inline://doc-2",
+                "snippet": "c" * 80,
+                "parent_context": "d" * 80,
+                "score": 0.8,
+            },
+        ]
+
+    def fake_build_query_answer_prompt(*, question: str, sources: list[dict[str, object]]) -> str:
+        captured["sources"] = sources
+        return "PROMPT"
+
+    async def fake_generate(prompt: str) -> str:
+        return "answer"
+
+    monkeypatch.setattr(query_module, "embed_query_text", fake_embed_query_text, raising=False)
+    monkeypatch.setattr(QueryService, "_semantic_ranked_document_ids", fake_semantic_ranked_document_ids)
+    monkeypatch.setattr(QueryService, "_sparse_ranked_document_ids", fake_sparse_ranked_document_ids)
+    monkeypatch.setattr(QueryService, "_get_indexed_documents", fake_get_indexed_documents)
+    monkeypatch.setattr(QueryService, "_build_sources", fake_build_sources)
+    monkeypatch.setattr(query_module, "build_query_answer_prompt", fake_build_query_answer_prompt, raising=False)
+    monkeypatch.setattr(query_module, "generate_text", fake_generate, raising=False)
+
+    service = QueryService(FakeSession(), query_cache=NoopCache())
+    await service.answer_question("invoice", UUID("00000000-0000-0000-0000-000000000002"))
+
+    assert len(captured["sources"]) == 2
+
+
+@pytest.mark.asyncio
 async def test_query_service_applies_project_top_k_to_final_sources(
     integration_session,
     seeded_project,
@@ -2561,3 +2805,164 @@ async def test_query_service_stores_response_in_cache_on_miss(monkeypatch):
     assert stored[0][0] == "query_cache:item:test"
     assert stored[0][1] == "00000000-0000-0000-0000-000000000002"
     assert stored[0][2]["retrieval_mode"] == "empty"
+
+
+@pytest.mark.asyncio
+async def test_query_service_demotes_chunks_with_negative_feedback(monkeypatch):
+    project_id = UUID("00000000-0000-0000-0000-000000000002")
+    tenant_id = UUID("00000000-0000-0000-0000-000000000001")
+    first_document_id = uuid4()
+    second_document_id = uuid4()
+    first_chunk_id = uuid4()
+    second_chunk_id = uuid4()
+
+    class FakeSession:
+        async def get(self, model, key):
+            return SimpleNamespace(id=project_id, tenant_id=tenant_id, config={})
+
+    class FakeExpansionService:
+        async def expand(self, question, use_llm=False):
+            return SimpleNamespace(expanded_query=question)
+
+    class FakeCache:
+        async def get(self, cache_key):
+            return None
+
+        async def set(self, **kwargs):
+            return None
+
+        def build_key(self, **kwargs):
+            return "query_cache:item:test"
+
+    class FakeFeedbackRepository:
+        async def get_feedback_summary(self, *, project_id, chunk_ids):
+            assert chunk_ids == [first_chunk_id, second_chunk_id]
+            return {
+                first_chunk_id: {"up": 0, "down": 3},
+                second_chunk_id: {"up": 0, "down": 0},
+            }
+
+    async def fake_embed_query_text(question: str):
+        return {
+            "task_type": "RETRIEVAL_QUERY",
+            "values": [0.1, 0.2],
+            "model": "gemini-embedding-2",
+            "dimension": 2,
+        }
+
+    async def fake_semantic_ranked_document_ids(self, project_id, **kwargs):
+        return [first_document_id, second_document_id], [first_chunk_id, second_chunk_id], {
+            first_chunk_id: 0.99,
+            second_chunk_id: 0.95,
+        }
+
+    async def fake_get_indexed_documents(self, project_id, **kwargs):
+        return [
+            SimpleNamespace(id=first_document_id, title="Doc 1", source_ref="doc-1", metadata_json={}),
+            SimpleNamespace(id=second_document_id, title="Doc 2", source_ref="doc-2", metadata_json={}),
+        ]
+
+    async def fake_build_sources(self, question, documents, ranked_chunk_ids, chunk_scores):
+        return [
+            {
+                "document_id": str(first_document_id),
+                "chunk_id": str(first_chunk_id),
+                "title": "Doc 1",
+                "source_ref": "doc-1",
+                "snippet": "bad source",
+                "score": 0.99,
+            },
+            {
+                "document_id": str(second_document_id),
+                "chunk_id": str(second_chunk_id),
+                "title": "Doc 2",
+                "source_ref": "doc-2",
+                "snippet": "better source",
+                "score": 0.95,
+            },
+        ]
+
+    async def fake_generate(prompt: str) -> str:
+        return "answer"
+
+    async def fake_rerank(self, question, source_entries, **kwargs):
+        return source_entries, False
+
+    monkeypatch.setattr(query_module, "embed_query_text", fake_embed_query_text, raising=False)
+    monkeypatch.setattr(query_module, "generate_text", fake_generate, raising=False)
+    monkeypatch.setattr(QueryService, "_semantic_ranked_document_ids", fake_semantic_ranked_document_ids, raising=False)
+    monkeypatch.setattr(QueryService, "_get_indexed_documents", fake_get_indexed_documents, raising=False)
+    monkeypatch.setattr(QueryService, "_build_sources", fake_build_sources, raising=False)
+    monkeypatch.setattr(QueryService, "_maybe_rerank_sources", fake_rerank, raising=False)
+
+    service = QueryService(
+        FakeSession(),
+        query_expansion=FakeExpansionService(),
+        query_cache=FakeCache(),
+        feedback_repository=FakeFeedbackRepository(),
+    )
+    result = await service.answer_question("Which invoice was paid?", project_id, retrieval_mode="dense")
+
+    assert result["sources"][0]["chunk_id"] == str(second_chunk_id)
+    assert result["sources"][1]["chunk_id"] == str(first_chunk_id)
+
+
+@pytest.mark.asyncio
+async def test_query_service_builds_related_chunk_metadata_for_source():
+    chunk_id = uuid4()
+    related_chunk_id = uuid4()
+    document_id = uuid4()
+
+    class FakeRepository:
+        async def get_chunks_by_ids(self, chunk_ids):
+            ids = set(chunk_ids)
+            chunk = SimpleNamespace(
+                id=chunk_id,
+                document_id=document_id,
+                parent_chunk_id=None,
+                content="Primary chunk",
+                page_number=1,
+                section_title="Overview",
+                acl=[],
+                related_chunk_ids=[str(related_chunk_id)],
+            )
+            related = SimpleNamespace(
+                id=related_chunk_id,
+                document_id=document_id,
+                parent_chunk_id=None,
+                content="Related detail snippet",
+                page_number=1,
+                section_title="Detail",
+                acl=[],
+                related_chunk_ids=[],
+            )
+            results = []
+            if chunk_id in ids:
+                results.append(chunk)
+            if related_chunk_id in ids:
+                results.append(related)
+            return results
+
+    service = QueryService(None)  # type: ignore[arg-type]
+    service.repository = FakeRepository()
+    document = SimpleNamespace(
+        id=document_id,
+        title="Doc",
+        source_ref="doc-ref",
+        metadata_json={"content_text": "Primary chunk"},
+    )
+
+    result = await service._build_sources(
+        "overview",
+        [document],
+        [chunk_id],
+        {chunk_id: 0.88},
+    )
+
+    assert result[0]["related_chunks"] == [
+        {
+            "chunk_id": str(related_chunk_id),
+            "section_title": "Detail",
+            "snippet": "Related detail snippet",
+        }
+    ]

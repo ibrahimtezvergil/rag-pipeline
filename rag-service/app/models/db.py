@@ -105,6 +105,7 @@ class RagChunk(Base):
     page_number: Mapped[int | None] = mapped_column(Integer)
     bbox: Mapped[dict | None] = mapped_column(JSON)
     section_title: Mapped[str | None] = mapped_column(Text)
+    related_chunk_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     acl: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, nullable=False)
     is_archived: Mapped[bool] = mapped_column(BOOLEAN, default=False, nullable=False)
     embed_model: Mapped[str | None] = mapped_column(Text)
@@ -202,6 +203,88 @@ class TenantSecret(Base):
     )
     provider: Mapped[str] = mapped_column(Text, nullable=False)
     secret_ref: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), default=utc_now, nullable=False
+    )
+
+
+class RagEvaluationRun(Base):
+    __tablename__ = "rag_evaluation_runs"
+
+    id: Mapped[uuid.UUID] = uuid_column()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("rag_projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("rag_tenants.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    dataset_name: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    faithfulness_avg: Mapped[float | None] = mapped_column()
+    answer_relevancy_avg: Mapped[float | None] = mapped_column()
+    context_recall_avg: Mapped[float | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), default=utc_now, nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+
+class RagEvaluationSample(Base):
+    __tablename__ = "rag_evaluation_samples"
+
+    id: Mapped[uuid.UUID] = uuid_column()
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("rag_evaluation_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    ground_truth: Mapped[str] = mapped_column(Text, nullable=False)
+    reference_context: Mapped[str] = mapped_column(Text, nullable=False)
+    model_answer: Mapped[str | None] = mapped_column(Text)
+    retrieved_context: Mapped[str | None] = mapped_column(Text)
+    faithfulness_score: Mapped[float | None] = mapped_column()
+    answer_relevancy_score: Mapped[float | None] = mapped_column()
+    context_recall_score: Mapped[float | None] = mapped_column()
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), default=utc_now, nullable=False
+    )
+
+
+class RagChunkFeedback(Base):
+    __tablename__ = "rag_chunk_feedback"
+
+    id: Mapped[uuid.UUID] = uuid_column()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("rag_tenants.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("rag_projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("rag_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    chunk_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("rag_chunks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    rating: Mapped[str] = mapped_column(Text, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    query_hash: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), default=utc_now, nullable=False
     )

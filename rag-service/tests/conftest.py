@@ -1,9 +1,10 @@
 import os
+from collections.abc import AsyncIterator
 from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete, select
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 
@@ -13,8 +14,11 @@ from app.main import create_app
 from app.models.db import (
     Base,
     RagChunk,
+    RagChunkFeedback,
     RagChunkDiffLog,
     RagDocument,
+    RagEvaluationRun,
+    RagEvaluationSample,
     RagIngestionJob,
     RagProject,
     RagSchedule,
@@ -53,7 +57,7 @@ def valid_headers() -> dict[str, str]:
 
 
 @pytest.fixture
-async def integration_session():
+async def integration_session() -> AsyncIterator[AsyncSession]:
     database_url = os.getenv(
         "INTEGRATION_DATABASE_URL",
         "postgresql+asyncpg://rag:rag@127.0.0.1:55432/ragdb",
@@ -65,18 +69,24 @@ async def integration_session():
         await conn.run_sync(Base.metadata.create_all)
 
     async with session_factory() as session:
-        for model in (
-            RagSchedule,
-            RagChunkDiffLog,
-            RagSyncCheckpoint,
-            TenantSecret,
-            RagChunk,
-            RagIngestionJob,
-            RagDocument,
-            RagProject,
-            RagTenant,
-        ):
-            await session.execute(delete(model))
+        await session.execute(
+            text(
+                "TRUNCATE TABLE "
+                "rag_evaluation_samples, "
+                "rag_evaluation_runs, "
+                "rag_chunk_feedback, "
+                "rag_schedules, "
+                "rag_chunk_diff_log, "
+                "rag_sync_checkpoints, "
+                "tenant_secrets, "
+                "rag_chunks, "
+                "rag_ingestion_jobs, "
+                "rag_documents, "
+                "rag_projects, "
+                "rag_tenants "
+                "RESTART IDENTITY CASCADE"
+            )
+        )
         await session.commit()
         yield session
         await session.rollback()

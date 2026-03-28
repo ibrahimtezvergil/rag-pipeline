@@ -82,6 +82,28 @@ async def test_create_ingestion_job_persists_document_and_job(
 
 
 @pytest.mark.asyncio
+async def test_create_ingestion_job_enqueues_callback_url_for_async_mode(
+    integration_session,
+    seeded_project,
+):
+    dispatcher = FakeDispatcher()
+    service = IngestionService(integration_session, dispatcher=dispatcher)
+
+    result = await service.create_ingestion_job(
+        IngestRequest(
+            source_type="web",
+            source_ref="https://example.com/article",
+            callback_url="https://example.com/callback",
+            mode="async",
+        ),
+        seeded_project["project_id"],
+    )
+
+    assert result["status"] == "pending"
+    assert dispatcher.enqueued[0]["callback_url"] == "https://example.com/callback"
+
+
+@pytest.mark.asyncio
 async def test_create_ingestion_batch_persists_multiple_jobs(
     integration_session,
     seeded_project,
@@ -1796,3 +1818,32 @@ async def test_process_document_job_skips_semantic_duplicate_chunk(monkeypatch):
     assert embed_calls == ["Alpha chunk.", "Beta chunk."]
     assert len(upsert_rows) == 1
     assert upsert_rows[0]["content"] == "Alpha chunk."
+
+
+def test_ingestion_service_builds_related_chunk_map_for_adjacent_children():
+    service = IngestionService(None)  # type: ignore[arg-type]
+    parent_id = UUID("00000000-0000-0000-0000-000000000100")
+    child_a = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000101"),
+        parent_chunk_id=parent_id,
+        chunk_index=1,
+        section_title="Billing",
+    )
+    child_b = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000102"),
+        parent_chunk_id=parent_id,
+        chunk_index=2,
+        section_title="Billing",
+    )
+    child_c = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000103"),
+        parent_chunk_id=parent_id,
+        chunk_index=3,
+        section_title="Payments",
+    )
+
+    relation_map = service._build_related_chunk_map([child_a, child_b, child_c])
+
+    assert relation_map[child_a.id] == [child_b.id]
+    assert relation_map[child_b.id] == [child_a.id, child_c.id]
+    assert relation_map[child_c.id] == [child_b.id]

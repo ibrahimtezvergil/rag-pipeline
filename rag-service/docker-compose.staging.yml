@@ -1,0 +1,133 @@
+services:
+  api:
+    build:
+      context: .
+    env_file:
+      - .env.staging.example
+    environment:
+      DATABASE_URL: postgresql+asyncpg://rag:rag@pgbouncer:6432/ragdb_staging
+      DATABASE_DIRECT_URL: postgresql+asyncpg://rag:rag@postgres:5432/ragdb_staging
+      DATABASE_USE_PGBOUNCER: "true"
+      QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://redis:6379/0
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - .:/app
+    ports:
+      - "18000:8000"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
+
+  worker:
+    build:
+      context: .
+    env_file:
+      - .env.staging.example
+    environment:
+      DATABASE_URL: postgresql+asyncpg://rag:rag@pgbouncer:6432/ragdb_staging
+      DATABASE_DIRECT_URL: postgresql+asyncpg://rag:rag@postgres:5432/ragdb_staging
+      DATABASE_USE_PGBOUNCER: "true"
+      QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://redis:6379/0
+    command: arq workers.tasks.ingest.WorkerSettings
+    volumes:
+      - .:/app
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ragdb_staging
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: rag
+    ports:
+      - "15432:5432"
+    volumes:
+      - staging_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d ragdb_staging"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  langfuse_db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: langfuse_staging
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+    volumes:
+      - staging_langfuse_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse_staging"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgbouncer:
+    build:
+      context: .
+      dockerfile: docker/pgbouncer/Dockerfile
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ragdb_staging
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: rag
+      PGBOUNCER_POOL_MODE: transaction
+      PGBOUNCER_DEFAULT_POOL_SIZE: 20
+      PGBOUNCER_MAX_CLIENT_CONN: 50
+      PGBOUNCER_RESERVE_POOL_SIZE: 5
+    ports:
+      - "16432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 6432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "16379:6379"
+
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    ports:
+      - "16333:6333"
+      - "16334:6334"
+    volumes:
+      - staging_qdrant_data:/qdrant/storage
+
+  langfuse:
+    image: langfuse/langfuse:2
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse_db:5432/langfuse_staging
+      NEXTAUTH_SECRET: staging-development-secret
+      SALT: staging-development-salt
+      NEXTAUTH_URL: http://localhost:13000
+      TELEMETRY_ENABLED: "false"
+    ports:
+      - "13000:3000"
+    depends_on:
+      langfuse_db:
+        condition: service_healthy
+
+volumes:
+  staging_postgres_data:
+  staging_langfuse_postgres_data:
+  staging_qdrant_data:

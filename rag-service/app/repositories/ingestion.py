@@ -212,6 +212,7 @@ class IngestionRepository:
                 page_number=row.get("page_number"),
                 bbox=row.get("bbox"),
                 section_title=row.get("section_title"),
+                related_chunk_ids=list(row.get("related_chunk_ids", [])),
                 acl=list(row.get("acl", [])),
                 embed_model=row.get("embed_model"),
                 embed_version=row.get("embed_version"),
@@ -240,6 +241,21 @@ class IngestionRepository:
             select(RagChunk).where(RagChunk.id.in_(chunk_ids))
         )
         return list(result)
+
+    async def update_related_chunk_ids(
+        self,
+        relation_map: dict[uuid.UUID, list[uuid.UUID]],
+    ) -> None:
+        if not relation_map:
+            return
+        chunks = await self.get_chunks_by_ids(list(relation_map))
+        chunk_map = {chunk.id: chunk for chunk in chunks}
+        for chunk_id, related_ids in relation_map.items():
+            chunk = chunk_map.get(chunk_id)
+            if chunk is None:
+                continue
+            chunk.related_chunk_ids = [str(related_id) for related_id in related_ids]
+        await self.session.flush()
 
     async def create_chunk_diff_logs(
         self,

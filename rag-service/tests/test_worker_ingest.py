@@ -271,6 +271,109 @@ async def test_run_stale_reembed_scan_calls_service():
 
 
 @pytest.mark.asyncio
+async def test_run_ingest_job_triggers_callback_on_completion(
+    integration_session,
+    seeded_project,
+    monkeypatch,
+):
+    callbacks: list[dict[str, object]] = []
+
+    async def fake_load(source_type, source_ref):
+        return {
+            "content": "Example article body",
+            "metadata": {"title": "Example Article", "content_length": 20},
+            "chunk_count": 1,
+        }
+
+    async def fake_embed_text(content, title):
+        return {"values": [0.1, 0.2, 0.3], "model": "gemini-test", "dimension": 3}
+
+    async def fake_send_ingestion_callback(**payload):
+        callbacks.append(payload)
+
+    monkeypatch.setattr(ingestion_service_module, "load_source", fake_load, raising=False)
+    monkeypatch.setattr(ingestion_service_module, "embed_text_content", fake_embed_text, raising=False)
+    monkeypatch.setattr("workers.tasks.ingest.send_ingestion_callback", fake_send_ingestion_callback, raising=False)
+
+    vector_store = FakeVectorStore()
+    service = IngestionService(
+        integration_session,
+        dispatcher=FakeDispatcher(),
+        vector_store=vector_store,
+    )
+    created = await service.create_ingestion_job(
+        IngestRequest(
+            source_type="web",
+            source_ref="https://example.com/article",
+            callback_url="https://example.com/callback",
+            mode="async",
+        ),
+        seeded_project["project_id"],
+    )
+
+    payload = {
+        "document_id": created["document_id"],
+        "ingestion_job_id": created["ingestion_job_id"],
+        "project_id": str(seeded_project["project_id"]),
+        "source_type": "web",
+        "source_ref": "https://example.com/article",
+        "callback_url": "https://example.com/callback",
+    }
+    result = await run_ingest_job({"ingestion_service": service, "job_try": 1}, payload)
+
+    assert result["status"] == "completed"
+    assert callbacks[0]["callback_url"] == "https://example.com/callback"
+    assert callbacks[0]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_run_ingest_job_triggers_callback_on_final_failure_without_breaking_result(
+    integration_session,
+    seeded_project,
+    monkeypatch,
+):
+    callbacks: list[dict[str, object]] = []
+
+    async def failing_load(source_type, source_ref):
+        raise RuntimeError("loader exploded")
+
+    async def fake_send_ingestion_callback(**payload):
+        callbacks.append(payload)
+        raise RuntimeError("callback failed")
+
+    monkeypatch.setattr(ingestion_service_module, "load_source", failing_load, raising=False)
+    monkeypatch.setattr("workers.tasks.ingest.send_ingestion_callback", fake_send_ingestion_callback, raising=False)
+
+    service = IngestionService(
+        integration_session,
+        dispatcher=FakeDispatcher(),
+        vector_store=FakeVectorStore(),
+    )
+    created = await service.create_ingestion_job(
+        IngestRequest(
+            source_type="web",
+            source_ref="https://example.com/article",
+            callback_url="https://example.com/callback",
+            mode="async",
+        ),
+        seeded_project["project_id"],
+    )
+
+    payload = {
+        "document_id": created["document_id"],
+        "ingestion_job_id": created["ingestion_job_id"],
+        "project_id": str(seeded_project["project_id"]),
+        "source_type": "web",
+        "source_ref": "https://example.com/article",
+        "callback_url": "https://example.com/callback",
+    }
+    result = await run_ingest_job({"ingestion_service": service, "job_try": 3}, payload)
+
+    assert result["status"] == "failed"
+    assert callbacks[0]["status"] == "failed"
+
+
+@pytest.mark.asyncio
 async def test_run_ingest_job_records_audio_clip_rows(
     integration_session,
     seeded_project,
@@ -357,3 +460,198 @@ async def test_run_ingest_job_records_audio_clip_rows(
     assert len(chunks) == 6
     assert sum(1 for chunk in chunks if chunk.parent_chunk_id is not None) == 3
     assert all(chunk.modality == "audio" for chunk in chunks)
+
+
+@pytest.mark.asyncio
+async def test_run_ingest_job_enriches_audio_chunks_with_transcript_metadata(
+    integration_session,
+    seeded_project,
+    monkeypatch,
+):
+    async def fake_load(source_type, source_ref):
+        return {
+            "content": "voice.mp3",
+            "metadata": {
+                "title": "voice.mp3",
+                "loader_strategy": "gemini_audio_clipped",
+                "mime_type": "audio/mpeg",
+                "binary_size_bytes": 1234,
+                "modality": "audio",
+                "url": "https://example.com/voice.mp3",
+                "duration_seconds": 140,
+                "clip_count": 2,
+                "clips": [
+                    {"clip_index": 0, "start_second": 0, "end_second": 120},
+                    {"clip_index": 1, "start_second": 120, "end_second": 140},
+                ],
+            },
+            "audio_bytes": b"ID3voice",
+            "chunk_count": 2,
+        }
+
+    async def fake_embed_audio(audio_bytes, title, mime_type):
+        return {
+            "provider": "gemini",
+            "model": "gemini-test",
+            "task_type": "RETRIEVAL_DOCUMENT",
+            "embed_version": "gemini-test-3",
+            "status": "completed",
+            "values": [0.1, 0.2, 0.3],
+            "dimension": 3,
+            "vector_dimension": 3,
+        }
+
+    async def fake_extract_audio_metadata(audio_bytes, *, filename=None):
+        return {
+            "status": "ok",
+            "provider": "whisper",
+            "transcript": "speaker one mentions invoice INV-1001. speaker two closes the call.",
+            "segments": [
+                {
+                    "segment_index": 0,
+                    "start_second": 5,
+                    "end_second": 35,
+                    "text": "speaker one mentions invoice INV-1001",
+                    "speaker_label": "SPEAKER_00",
+                },
+                {
+                    "segment_index": 1,
+                    "start_second": 122,
+                    "end_second": 135,
+                    "text": "speaker two closes the call",
+                    "speaker_label": "SPEAKER_01",
+                },
+            ],
+        }
+
+    monkeypatch.setattr(ingestion_service_module, "load_source", fake_load, raising=False)
+    monkeypatch.setattr(ingestion_service_module, "embed_audio_content", fake_embed_audio, raising=False)
+    monkeypatch.setattr(
+        ingestion_service_module,
+        "extract_audio_metadata",
+        fake_extract_audio_metadata,
+        raising=False,
+    )
+
+    vector_store = FakeVectorStore()
+    service = IngestionService(
+        integration_session,
+        dispatcher=FakeDispatcher(),
+        vector_store=vector_store,
+    )
+    created = await service.create_ingestion_job(
+        IngestRequest(
+            source_type="audio",
+            source_ref="https://example.com/voice.mp3",
+            mode="async",
+        ),
+        seeded_project["project_id"],
+    )
+
+    payload = {
+        "document_id": created["document_id"],
+        "ingestion_job_id": created["ingestion_job_id"],
+        "project_id": str(seeded_project["project_id"]),
+        "source_type": "audio",
+        "source_ref": "https://example.com/voice.mp3",
+    }
+    await run_ingest_job({"ingestion_service": service, "job_try": 1}, payload)
+
+    document = await service.repository.get_document(UUID(created["document_id"]))
+    chunks = await service.repository.get_document_chunks(UUID(created["document_id"]))
+    parent_chunks = [chunk for chunk in chunks if chunk.parent_chunk_id is None]
+
+    assert document is not None
+    assert document.metadata_json["audio_metadata"]["status"] == "ok"
+    assert document.metadata_json["audio_metadata"]["provider"] == "whisper"
+    assert len(document.metadata_json["audio_metadata"]["segments"]) == 2
+    assert "invoice INV-1001" in parent_chunks[0].content
+    assert "closes the call" in parent_chunks[1].content
+
+
+@pytest.mark.asyncio
+async def test_run_ingest_job_keeps_audio_summary_when_metadata_unavailable(
+    integration_session,
+    seeded_project,
+    monkeypatch,
+):
+    async def fake_load(source_type, source_ref):
+        return {
+            "content": "voice.mp3",
+            "metadata": {
+                "title": "voice.mp3",
+                "loader_strategy": "gemini_audio_clipped",
+                "mime_type": "audio/mpeg",
+                "binary_size_bytes": 1234,
+                "modality": "audio",
+                "url": "https://example.com/voice.mp3",
+                "duration_seconds": 95,
+                "clip_count": 1,
+                "clips": [
+                    {"clip_index": 0, "start_second": 0, "end_second": 95},
+                ],
+            },
+            "audio_bytes": b"ID3voice",
+            "chunk_count": 1,
+        }
+
+    async def fake_embed_audio(audio_bytes, title, mime_type):
+        return {
+            "provider": "gemini",
+            "model": "gemini-test",
+            "task_type": "RETRIEVAL_DOCUMENT",
+            "embed_version": "gemini-test-3",
+            "status": "completed",
+            "values": [0.1, 0.2, 0.3],
+            "dimension": 3,
+            "vector_dimension": 3,
+        }
+
+    async def fake_extract_audio_metadata(audio_bytes, *, filename=None):
+        return {
+            "status": "unavailable",
+            "provider": "whisper",
+            "transcript": None,
+            "segments": [],
+        }
+
+    monkeypatch.setattr(ingestion_service_module, "load_source", fake_load, raising=False)
+    monkeypatch.setattr(ingestion_service_module, "embed_audio_content", fake_embed_audio, raising=False)
+    monkeypatch.setattr(
+        ingestion_service_module,
+        "extract_audio_metadata",
+        fake_extract_audio_metadata,
+        raising=False,
+    )
+
+    vector_store = FakeVectorStore()
+    service = IngestionService(
+        integration_session,
+        dispatcher=FakeDispatcher(),
+        vector_store=vector_store,
+    )
+    created = await service.create_ingestion_job(
+        IngestRequest(
+            source_type="audio",
+            source_ref="https://example.com/voice.mp3",
+            mode="async",
+        ),
+        seeded_project["project_id"],
+    )
+
+    payload = {
+        "document_id": created["document_id"],
+        "ingestion_job_id": created["ingestion_job_id"],
+        "project_id": str(seeded_project["project_id"]),
+        "source_type": "audio",
+        "source_ref": "https://example.com/voice.mp3",
+    }
+    await run_ingest_job({"ingestion_service": service, "job_try": 1}, payload)
+
+    document = await service.repository.get_document(UUID(created["document_id"]))
+    chunks = await service.repository.get_document_chunks(UUID(created["document_id"]))
+    parent_chunks = [chunk for chunk in chunks if chunk.parent_chunk_id is None]
+
+    assert document is not None
+    assert document.metadata_json["audio_metadata"]["status"] == "unavailable"
+    assert parent_chunks[0].content == "voice.mp3 clip 1 (0-95s)"

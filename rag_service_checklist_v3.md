@@ -97,8 +97,8 @@
 ### LangGraph Pipeline
 - [x] Direkt pipeline (basit soru-cevap) — Ref: `rag-service/app/services/query.py`, `rag-service/app/services/prompts.py`, `rag-service/app/services/llm.py` | Akış: `retrieve -> rerank -> prompt build -> LLM generate -> fallback on error`
 - [ ] LangGraph Self-RAG akışı — classify → retrieve → grade → rewrite → generate → hallucination_check
-- [ ] Latency budget enforcement — `latency_budget_ms` aşınca early abort
-- [ ] Token budget enforcement — `token_budget` aşınca generate kısalt
+- [x] Latency budget enforcement — `latency_budget_ms` aşınca early abort — Ref: `rag-service/app/services/query.py`, `rag-service/tests/test_query_service.py` | Akış: `query start -> retrieval/rerank elapsed -> remaining budget hesapla -> düşükse LLM skip -> _fallback_answer`
+- [x] Token budget enforcement — `token_budget` aşınca generate kısalt — Ref: `rag-service/app/services/query.py`, `rag-service/tests/test_query_service.py` | Akış: `final sources -> approx token hesabı -> source/context trim -> prompt build`
 - [ ] Config toggle — `use_graph: true/false`
 
 ### Langfuse Entegrasyonu
@@ -130,8 +130,8 @@
 - [x] Embedding versioning — stale chunk tespiti, ARQ kuyruğuna al — Ref: `rag-service/app/services/ingestion.py`, `rag-service/app/repositories/ingestion.py`, `rag-service/workers/tasks/ingest.py` | Akış: `latest indexed docs -> child chunk embed_version compare -> stale doc detect -> async ingestion requeue -> hourly ARQ scan`
 
 ### Diğer
-- [ ] Audio metadata pipeline (opsiyonel) — Whisper + pyannote diarization (timestamp + speaker metadata için)
-- [ ] Ingestion webhook callback — HMAC-SHA256 imzalı, `callback_url` desteği
+- [x] Audio metadata pipeline (opsiyonel) — Whisper + pyannote diarization (timestamp + speaker metadata için) — Ref: `rag-service/app/services/audio_metadata.py`, `rag-service/app/services/ingestion.py`, `rag-service/tests/test_audio_metadata.py`, `rag-service/tests/test_worker_ingest.py` | Akış: `audio bytes -> best-effort metadata extract -> transcript/segments document metadata -> clip transcript varsa audio chunk content enrich, yoksa clip summary fallback`
+- [x] Ingestion webhook callback — HMAC-SHA256 imzalı, `callback_url` desteği — Ref: `rag-service/app/services/callbacks.py`, `rag-service/app/schemas/ingest.py`, `rag-service/app/services/ingestion.py`, `rag-service/workers/tasks/ingest.py`, `rag-service/tests/test_callbacks.py`, `rag-service/tests/test_worker_ingest.py` | Akış: `async ingest request -> callback_url enqueue payload -> worker completed/failed -> signed POST -> fail-open callback delivery`
 - [x] Rate limiting — Redis sliding window, project_id bazlı, 429 + Retry-After — Ref: `rag-service/app/services/rate_limit.py`, `rag-service/app/deps.py`, `rag-service/app/api/query.py`, `rag-service/app/api/ingest.py` | Akış: `project+route -> redis sliding window -> 429/Retry-After`
 - [x] Circuit breaker — Qdrant/Gemini/Cohere/LLM per-service kurallar — Ref: `rag-service/app/services/circuit_breaker.py`, `rag-service/app/services/llm.py`, `rag-service/app/services/embedder.py`, `rag-service/app/services/reranker.py`, `rag-service/app/services/vector_store.py`, `rag-service/app/services/query.py` | Akış: `provider boundary -> before_call -> upstream call -> success/failure state update -> fast-fail veya mevcut query fallback`
 - [x] Confidence score — top chunk score ortalaması, düşükse uyarı — Ref: `rag-service/app/services/query.py`, `rag-service/app/schemas/query.py` | Akış: `final source scores -> normalize -> average -> confidence_score + optional warning`
@@ -144,20 +144,20 @@
 ### Veri Kalitesi
 - [x] Semantic deduplication — embedding similarity > 0.97 ise atla — Ref: `rag-service/app/services/ingestion.py`, `rag-service/app/services/vector_store.py`, `rag-service/app/config.py` | Akış: `text child embed -> qdrant nearest-neighbor duplicate check -> score>=0.97 ise chunk skip -> diğer chunklar normal upsert`
 - [x] Adaptive chunking — içerik yoğunluğuna göre otomatik chunk size — Ref: `rag-service/app/services/chunking.py` | Akış: `raw chunk normalize -> punctuation/list/cümle yoğunluğu heuristiği -> adaptive max_tokens -> split`
-- [ ] RAG Evaluation Pipeline — RAGAS metrikleri (faithfulness, answer_relevancy, context_recall)
-- [ ] Feedback loop — `POST /feedback` (rating, chunk_ids) → kötü chunk'ları düşür
+- [x] RAG Evaluation Pipeline — faithfulness, answer_relevancy, context_recall — Ref: `rag-service/app/api/evaluations.py`, `rag-service/app/services/evaluations.py`, `rag-service/app/repositories/evaluations.py`, `rag-service/workers/tasks/evaluations.py` | Akış: `POST /evaluations -> rag_evaluation_runs/samples persist -> ARQ run_evaluation_job -> mevcut query pipeline her sample için çalışır -> skorlar sample/run seviyesinde DB'ye yazılır -> GET /evaluations/{id}`
+- [x] Feedback loop — `POST /feedback` (rating, chunk_ids) → kötü chunk'ları düşür — Ref: `rag-service/app/api/feedback.py`, `rag-service/app/services/feedback.py`, `rag-service/app/repositories/feedback.py`, `rag-service/app/services/query.py` | Akış: `query response source.chunk_id -> POST /feedback kaydi -> rag_chunk_feedback persist -> sonraki query final source listesinde negatif feedback alan chunk score penalty alir`
 
 ### Ölçek
 - [x] Qdrant post-filtering fetch — sadece ID+metadata Qdrant'ta, metin PostgreSQL'den — Ref: `rag-service/app/services/vector_store.py`, `rag-service/app/services/query.py`, `rag-service/app/repositories/ingestion.py` | Akış: `qdrant returns chunk_id/document_id/score -> query service DB chunk fetch -> snippet/parent_context postgres chunk content`
 - [ ] PostgreSQL partition stratejisi — tiered: shared (<100K chunk), dedicated (≥100K)
 - [x] PgBouncer — transaction pool_mode, 20-50 pool size — Ref: `rag-service/docker-compose.yml`, `rag-service/app/db/session.py`, `rag-service/migrations/env.py`, `rag-service/docker/pgbouncer/Dockerfile` | Akış: `api/worker -> pgbouncer:6432 transaction pool -> postgres`, `runtime URL prepared_statement_cache_size=0 + NullPool`, `alembic -> DATABASE_DIRECT_URL`, `container non-root çalışır`
-- [ ] Document relationship — `related_chunks` metadata, bölümler arası referans
+- [x] Document relationship — `related_chunks` metadata, bölümler arası referans — Ref: `rag-service/app/services/ingestion.py`, `rag-service/app/repositories/ingestion.py`, `rag-service/app/services/query.py`, `rag-service/app/models/db.py` | Akış: `ingest child chunklar icin sibling/section heuristigi -> related_chunk_ids persist -> query source output related_chunks metadata olarak yakin bolumleri dondurur`
 
 ### Admin & Yönetim
 - [ ] Filament admin panel — tenant listesi, API key yönetimi
 - [ ] Usage dashboard — proje bazlı token/query maliyet raporu
 - [ ] Laravel SDK — HTTP wrapper, her projede tekrar yazma
-- [ ] Staging ortamı — ayrı Qdrant + PostgreSQL instance
+- [x] Staging ortamı — ayrı Qdrant + PostgreSQL instance — Ref: `rag-service/docker-compose.staging.yml`, `rag-service/.env.staging.example`, `docs/operations/rag-service-staging-runbook.md`, `rag-service/tests/test_deployment_config.py` | Akış: `staging compose -> isolated postgres/qdrant/redis/langfuse -> env.staging config -> migrate -> health/ingest/query smoke runbook`
 
 ---
 
@@ -397,3 +397,19 @@ Production smoke blocker paketi canlı olarak doğrulandı.
 
 - `DB loader` hâlâ kapalı.
 - `Latency budget enforcement` ve `Token budget enforcement` hâlâ açık.
+
+---
+
+## Dürüst Notlar — Sonraki Teknik Temizlik
+
+- Integration test fixture stabilize edildi.
+  Yapılan: `drop_all/create_all` kaldırıldı; fixture artık test başına `create_all + TRUNCATE` yapıyor. `tests/test_ingestion_service.py tests/test_query_service.py` suite'i `67 passed` ile temiz geçti.
+
+- Aynı anda birden fazla `pytest` süreci açılırsa local test DB kilitlenebiliyor.
+  Yapılması gereken: integration suite'i tek process ile çalıştır; stuck `pytest` process'lerini temizlemeden yeni koşu başlatma.
+
+- `Document relationship` geniş integration suite ile de doğrulandı.
+  Yapılan: `tests/test_ingestion_service.py tests/test_query_service.py` birlikte koşuldu ve geçti.
+
+- Yeni migration eklendikçe local integration DB eski şemada kalabiliyor.
+  Yapılması gereken: migration sonrası temiz test DB'de `alembic upgrade head` veya test DB reset çalıştır.

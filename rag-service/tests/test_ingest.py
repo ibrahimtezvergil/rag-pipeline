@@ -315,6 +315,7 @@ async def test_post_ingest_accepts_audio_url_payload(client, app, valid_headers)
         assert payload.source_type == "audio"
         assert str(payload.source_ref) == "https://example.com/audio.mp3"
         assert payload.source_base64 is None
+        assert str(payload.callback_url) == "https://example.com/callback"
         return {
             "document_id": str(uuid4()),
             "ingestion_job_id": str(uuid4()),
@@ -333,6 +334,7 @@ async def test_post_ingest_accepts_audio_url_payload(client, app, valid_headers)
         json={
             "source_type": "audio",
             "source_ref": "https://example.com/audio.mp3",
+            "callback_url": "https://example.com/callback",
             "mode": "async",
         },
     )

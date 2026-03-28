@@ -6,7 +6,10 @@ from arq.worker import Retry, func
 
 from app.config import get_settings
 from app.db.session import AsyncSessionLocal
+from app.services.evaluations import EvaluationService
+from app.services.callbacks import send_ingestion_callback
 from app.services.ingestion import IngestionService
+from workers.tasks.evaluations import run_evaluation_job
 from workers.tasks.schedules import run_schedule_tick
 
 
@@ -21,15 +24,25 @@ async def run_ingest_job(ctx: dict[str, object], payload: dict[str, str]) -> dic
     assert isinstance(service, IngestionService)
     job_try = int(ctx.get("job_try", 1))
     try:
-        return await service.process_ingestion_job(
+        result = await service.process_ingestion_job(
             payload["ingestion_job_id"],
             retry_count=max(0, job_try - 1),
         )
+        await _send_callback_if_configured(
+            payload,
+            status=result["status"],
+        )
+        return result
     except Exception as exc:
         if job_try >= MAX_RETRIES:
             await service.record_failure(
                 payload["ingestion_job_id"],
                 retry_count=job_try,
+                error_message=str(exc),
+            )
+            await _send_callback_if_configured(
+                payload,
+                status="failed",
                 error_message=str(exc),
             )
             return {
@@ -54,10 +67,34 @@ async def run_stale_reembed_scan(ctx: dict[str, object]) -> dict[str, int]:
     return await service.requeue_stale_documents(limit=100)
 
 
+async def _send_callback_if_configured(
+    payload: dict[str, str],
+    *,
+    status: str,
+    error_message: str | None = None,
+) -> None:
+    callback_url = payload.get("callback_url")
+    if not callback_url:
+        return
+    try:
+        await send_ingestion_callback(
+            callback_url=callback_url,
+            document_id=payload["document_id"],
+            ingestion_job_id=payload["ingestion_job_id"],
+            project_id=payload["project_id"],
+            status=status,
+            source_type=payload["source_type"],
+            error_message=error_message,
+        )
+    except Exception:
+        return
+
+
 class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     functions = [
         func(run_ingest_job, max_tries=MAX_RETRIES),
+        func(run_evaluation_job, max_tries=1),
         func(run_schedule_tick, max_tries=1),
         func(run_stale_reembed_scan, max_tries=1),
     ]

@@ -70,3 +70,41 @@ def test_alembic_history_has_single_head():
 
     heads = [revision for revision in revisions if revision not in referenced]
     assert len(heads) == 1, heads
+
+
+def test_staging_compose_exists_and_uses_isolated_ports_and_volumes():
+    compose = Path(__file__).resolve().parents[1] / "docker-compose.staging.yml"
+    content = compose.read_text()
+
+    assert "18000:8000" in content
+    assert "15432:5432" in content
+    assert "16432:6432" in content
+    assert "16333:6333" in content
+    assert "staging_postgres_data" in content
+    assert "staging_qdrant_data" in content
+    assert "staging_langfuse_postgres_data" in content
+
+
+def test_env_staging_example_exists_with_required_keys():
+    env_example = Path(__file__).resolve().parents[1] / ".env.staging.example"
+    content = env_example.read_text()
+
+    assert "DATABASE_URL=" in content
+    assert "DATABASE_DIRECT_URL=" in content
+    assert "QDRANT_URL=" in content
+    assert "REDIS_URL=" in content
+    assert "API_KEYS=" in content
+    assert "GEMINI_API_KEY=" in content
+    assert "COHERE_API_KEY=" in content
+    assert "LANGFUSE_HOST=" in content
+
+
+def test_staging_runbook_exists_with_migration_and_smoke_steps():
+    runbook = Path(__file__).resolve().parents[2] / "docs" / "operations" / "rag-service-staging-runbook.md"
+    content = runbook.read_text()
+
+    assert "docker-compose -f docker-compose.staging.yml up -d --build" in content
+    assert "alembic upgrade head" in content
+    assert "/health" in content
+    assert "/ingest" in content
+    assert "/query" in content
