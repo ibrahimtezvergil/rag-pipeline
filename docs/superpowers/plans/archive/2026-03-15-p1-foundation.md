@@ -1,5 +1,7 @@
 # RAG Service P1 Foundation — Implementation Plan
 
+## Status: ARCHIVED — SUPERSEDED
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Set up the complete foundation for the RAG service: project skeleton, Docker Compose stack, PostgreSQL schema with Alembic, authentication middleware, and health endpoint with service status checks.

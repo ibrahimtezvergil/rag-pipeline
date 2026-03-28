@@ -1,5 +1,7 @@
 # RAG Service Loaders Slice Implementation Plan
 
+## Status: ARCHIVED — SUPERSEDED
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add real `web` and `pdf` sync ingestion behavior that fetches source content, derives basic metadata, and updates document/job state.

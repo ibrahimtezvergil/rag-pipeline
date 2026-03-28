@@ -1,5 +1,7 @@
 # Sparse Search Design
 
+## Status: COMPLETED
+
 ## Goal
 
 `/query` akışına production-ready sparse retrieval eklemek. Hedef, dense aramadan bağımsız olarak Qdrant üzerinde keyword ağırlıklı arama çalıştırmak ve sonraki `RRF fusion` adımı için doğru temeli hazırlamak.

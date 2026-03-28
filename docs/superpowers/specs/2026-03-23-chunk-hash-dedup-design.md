@@ -1,5 +1,7 @@
 # Chunk Hash Compare Design
 
+## Status: COMPLETED
+
 ## Goal
 
 Ayni document kaynagi yeniden ingest edildiginde, icerigi degismeyen vector child chunk'lari yeniden embed/upsert etmemek.

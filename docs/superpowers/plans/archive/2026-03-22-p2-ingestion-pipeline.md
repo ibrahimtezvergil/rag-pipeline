@@ -1,5 +1,7 @@
 # RAG Service P2 Ingestion Pipeline — Implementation Plan
 
+## Status: ARCHIVED — SUPERSEDED
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the complete ingestion pipeline: source loaders (PDF, web, image, structured), chunker, Gemini Embedding 2 embedder, BM25 sparse encoder, Qdrant upsert, ARQ async worker, and the `/ingest` REST endpoint.

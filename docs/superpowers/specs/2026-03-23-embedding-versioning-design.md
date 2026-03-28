@@ -1,5 +1,7 @@
 # Embedding Versioning Design
 
+## Status: COMPLETED
+
 ## Goal
 
 Aktif `embed_version` ile eski child chunk `embed_version` kayıtlarını karşılaştırıp stale belgeleri yeniden async ingestion kuyruğuna almak.

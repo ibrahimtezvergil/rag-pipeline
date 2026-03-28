@@ -1,5 +1,7 @@
 # Sync Checkpoints Design
 
+## Status: COMPLETED
+
 ## Goal
 
 Connector bazli ingestion'larda `rag_sync_checkpoints.cursor_state` bilgisini basarili ingest sonunda guncellemek.

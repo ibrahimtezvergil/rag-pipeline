@@ -1,5 +1,7 @@
 # Adaptive Chunking Design
 
+## Status: COMPLETED
+
 ## Goal
 
 İçerik yoğunluğu ve yapısına göre chunk split penceresini otomatik ayarlamak.

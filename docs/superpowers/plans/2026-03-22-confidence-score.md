@@ -1,5 +1,7 @@
 # Confidence Score Implementation Plan
 
+## Status: COMPLETED
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add `confidence_score` and `confidence_warning` to query/chat responses using normalized final source scores and a low-confidence warning threshold.

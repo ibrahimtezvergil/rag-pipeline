@@ -1,5 +1,7 @@
 # Scheduled Re-index Plan
 
+## Status: COMPLETED
+
 1. Add failing tests for schedule endpoint, schedule persistence, due schedule execution, and worker tick.
 2. Add schedule model, schema, repository, service, and cron parser.
 3. Wire `POST /schedules` into FastAPI router.

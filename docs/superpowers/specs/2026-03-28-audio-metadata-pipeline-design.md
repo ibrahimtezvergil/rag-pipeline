@@ -1,5 +1,7 @@
 # Audio Metadata Pipeline Design
 
+## Status: COMPLETED
+
 ## Amaç
 
 Mevcut audio ingest akışına transcript ve segment metadata eklemek, ancak audio embedding ana yolunu kırmamak.

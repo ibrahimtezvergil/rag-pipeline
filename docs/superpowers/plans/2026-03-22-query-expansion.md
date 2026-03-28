@@ -1,5 +1,7 @@
 # Query Expansion Implementation Plan
 
+## Status: COMPLETED
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a production-ready query expansion layer that uses deterministic synonyms by default and optional LLM rewrite for retrieval-only expansion.

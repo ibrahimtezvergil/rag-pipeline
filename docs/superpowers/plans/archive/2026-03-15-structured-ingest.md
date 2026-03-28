@@ -1,5 +1,7 @@
 # Structured Ingest Implementation Plan
 
+## Status: ARCHIVED — SUPERSEDED
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a generic `structured` ingest flow that accepts `records[]`, formats them into text with `SummaryFormatter`, and runs them through the existing chunk/embed/upsert pipeline with tenant-safe scope metadata.

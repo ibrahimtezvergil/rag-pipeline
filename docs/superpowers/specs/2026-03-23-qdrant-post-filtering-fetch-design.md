@@ -1,5 +1,7 @@
 # Qdrant Post-Filtering Fetch Design
 
+## Status: COMPLETED
+
 ## Goal
 
 Qdrant payload'ında metin taşımamak; vector search sonrası snippet ve parent context'i PostgreSQL chunk kayıtlarından üretmek.

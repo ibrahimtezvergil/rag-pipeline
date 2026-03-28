@@ -1,5 +1,7 @@
 # Semantic Deduplication Plan
 
+## Status: COMPLETED
+
 1. Add failing tests for Qdrant duplicate lookup and ingestion chunk skip.
 2. Add duplicate lookup method to `QdrantVectorStore`.
 3. Add ingestion duplicate check before vector chunk row creation.

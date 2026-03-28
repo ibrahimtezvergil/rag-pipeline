@@ -1,5 +1,7 @@
 # Production Smoke Blockers Implementation Plan
 
+## Status: COMPLETED
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fix the current deploy and smoke-test blockers so the stack can build, start, ingest a PDF, answer a query, and still enforce rate limits.

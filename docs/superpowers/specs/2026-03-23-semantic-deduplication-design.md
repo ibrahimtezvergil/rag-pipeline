@@ -1,5 +1,7 @@
 # Semantic Deduplication Design
 
+## Status: COMPLETED
+
 ## Goal
 
 Text child chunk embedding'i mevcut tenant/scope corpus'una semantik olarak çok yakınsa (`score >= 0.97`) yeni vector point yazmamak.

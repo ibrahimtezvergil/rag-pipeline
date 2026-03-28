@@ -1,5 +1,7 @@
 # Document Relationship Design
 
+## Status: COMPLETED
+
 ## Goal
 
 Ayni dokuman icindeki ilgili bolumleri birbirine baglamak ve query sonucunda operatore ek baglam gostermek.

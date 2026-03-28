@@ -1,5 +1,7 @@
 # Confidence Score Design
 
+## Status: COMPLETED
+
 ## Goal
 
 `/query` ve buna bağlı cevap akışına basit ama production-ready bir güven sinyali eklemek. Hedef, retrieval sonucunun ne kadar güçlü göründüğünü sayısal olarak döndürmek ve düşük güven durumunda UI katmanının kullanabileceği kısa bir uyarı sağlamaktır.

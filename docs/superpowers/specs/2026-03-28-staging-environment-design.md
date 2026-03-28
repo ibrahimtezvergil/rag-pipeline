@@ -1,5 +1,7 @@
 # Staging Environment Design
 
+## Status: COMPLETED
+
 ## Amaç
 
 Production deploy öncesi migration, ingest, query ve sağlık kontrollerini gerçek servislere yakın ama izole bir ortamda doğrulamak.

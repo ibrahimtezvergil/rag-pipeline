@@ -1,5 +1,7 @@
 # Feedback Loop Design
 
+## Status: COMPLETED
+
 ## Goal
 
 Gercek kullanici geri bildirimini toplamak ve negatif sinyali retrieval sonucuna yansitmak.
@@ -18,7 +20,7 @@ Gercek kullanici geri bildirimini toplamak ve negatif sinyali retrieval sonucuna
 - `rag_chunk_feedback`
   - `id`
   - `tenant_id`
-  - `project_id`
+  - `application_id`
   - `document_id`
   - `chunk_id`
   - `rating`
@@ -49,5 +51,5 @@ Gercek kullanici geri bildirimini toplamak ve negatif sinyali retrieval sonucuna
 ## Safety
 
 - feedback kaydi query cevabini bozmaz
-- project disi chunk id verilirse `400`
-- feedback etkisi sadece ayni project icinde uygulanir
+- application disi chunk id verilirse `400`
+- feedback etkisi sadece ayni application icinde uygulanir

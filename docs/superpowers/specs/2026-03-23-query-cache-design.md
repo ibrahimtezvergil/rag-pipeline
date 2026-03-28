@@ -1,5 +1,7 @@
 # Query Cache Design
 
+## Status: COMPLETED
+
 ## Goal
 
 `/query` ve dolayli `/chat` akislarina production-ready Redis query cache eklemek; veri degisince cache'i invalidate etmek; bunu fail-open ve request semantics bozulmadan yapmak.

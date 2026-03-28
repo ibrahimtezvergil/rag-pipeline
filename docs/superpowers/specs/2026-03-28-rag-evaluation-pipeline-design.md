@@ -1,5 +1,7 @@
 # RAG Evaluation Pipeline Design
 
+## Status: COMPLETED
+
 ## Amaç
 
 RAG sisteminin retrieval ve answer kalitesini ölçülebilir hale getirmek.
@@ -57,7 +59,7 @@ Yeni tablolar:
 `rag_evaluation_runs`:
 
 - `id`
-- `project_id`
+- `application_id`
 - `status`
 - `dataset_name`
 - `sample_count`

@@ -1,5 +1,7 @@
 # Structured LLM Formatter Implementation Plan
 
+## Status: ARCHIVED — SUPERSEDED
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make `structured` ingest send arbitrary JSON records to an LLM for semantic rewriting before chunk/embed/upsert, with rule-based fallback if LLM formatting is unavailable.

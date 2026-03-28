@@ -1,5 +1,7 @@
 # RAG Service P1 Foundation Design
 
+## Status: ARCHIVED — SUPERSEDED
+
 **Date:** 2026-03-15
 
 ## Goal

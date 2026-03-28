@@ -1,5 +1,7 @@
 # RAG Service P1 Foundation Implementation Plan
 
+## Status: ARCHIVED — SUPERSEDED
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the first working foundation of `rag-service` with app scaffolding, infrastructure config, database schema, authentication middleware, and a health endpoint.

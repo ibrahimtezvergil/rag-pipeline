@@ -1,5 +1,7 @@
 # Chunk Diff And Reuse Design
 
+## Status: COMPLETED
+
 ## Goal
 
 Ayni source yeniden ingest edildiginde previous version child chunk hash'lerini yeni chunk hash'leriyle karsilastirip:

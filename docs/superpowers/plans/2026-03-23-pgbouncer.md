@@ -1,5 +1,7 @@
 # PgBouncer Implementation Plan
 
+## Status: COMPLETED
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Runtime PostgreSQL bağlantılarını PgBouncer transaction pooling üzerinden geçirmek ve app/runtime/migration ayarlarını buna uyumlu hale getirmek.

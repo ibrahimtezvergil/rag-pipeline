@@ -1,5 +1,7 @@
 # Observability Logging Design
 
+## Status: COMPLETED
+
 ## Goal
 
 RAG servisinin ingestion ve query akışlarına production-ready structured JSON logging eklemek. Hedef, uygulama stdout'una makine tarafından toplanabilir log event'leri yazmak ve özellikle ingestion/query performansını, retrieval sonucunu ve hata anlarını kör bırakmamaktır.

@@ -1,5 +1,7 @@
 # Ingestion Webhook Callback Implementation Plan
 
+## Status: COMPLETED
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Async ingest job tamamlandığında veya final failure durumunda HMAC-imzalı callback göndermek.

@@ -1,5 +1,7 @@
 # PgBouncer Design
 
+## Status: COMPLETED
+
 ## Goal
 
 Runtime API/worker PostgreSQL bağlantılarını PgBouncer üzerinden geçirmek, asyncpg + transaction pooling uyumunu sağlamak ve migration akışını doğrudan PostgreSQL'e bağlı tutmak.

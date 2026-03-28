@@ -1,5 +1,7 @@
 # Application Domain Refactor Design
 
+## Status: COMPLETED
+
 ## Problem
 
 Mevcut sistemde `tenant -> project` dili teknik olarak çalışıyor, ancak ürün modeline tam uymuyor.

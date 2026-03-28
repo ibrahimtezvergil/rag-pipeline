@@ -1,5 +1,7 @@
 # RAG Service P3 Query Pipeline — Implementation Plan
 
+## Status: ARCHIVED — SUPERSEDED
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the complete query pipeline: hybrid search (dense + sparse → RRF fusion → Cohere Rerank), parent context expansion, `/query` endpoint, Redis-backed `/chat` endpoint with conversation history, and optional LangGraph Self-RAG.

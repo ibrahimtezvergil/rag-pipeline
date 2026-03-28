@@ -1,5 +1,7 @@
 # Direct Query Pipeline Design
 
+## Status: COMPLETED
+
 ## Goal
 
 `/query` akışını retrieval-only yapıdan çıkarıp production-ready, kaynak dayalı tek seferlik soru-cevap hattına dönüştürmek. Hedef, mevcut hybrid retrieval + rerank çıktısını güvenli bir prompt ile LLM'e verip kullanıcıya anlamlı cevap döndürmek.

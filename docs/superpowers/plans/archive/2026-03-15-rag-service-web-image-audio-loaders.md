@@ -1,5 +1,7 @@
 # Web, Image, Audio Loaders Implementation Plan
 
+## Status: ARCHIVED — SUPERSEDED
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add checklist-level `web`, `image`, and `audio` source loaders to `rag-service`, including crawl4ai-backed web ingestion, Gemini native image embedding, and 120-second audio clip ingestion.

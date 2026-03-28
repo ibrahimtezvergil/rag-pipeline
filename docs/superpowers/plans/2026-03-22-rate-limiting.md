@@ -1,5 +1,7 @@
 # Rate Limiting Implementation Plan
 
+## Status: COMPLETED
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ağır endpoint'lere project bazlı Redis sliding window rate limiting eklemek ve limit aşımında `429 + Retry-After` döndürmek.

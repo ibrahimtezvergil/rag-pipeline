@@ -1,5 +1,7 @@
 # Feedback Loop Plan
 
+## Status: COMPLETED
+
 1. Feedback DB model ve migration ekle.
 2. Feedback schema, repository, service yaz.
 3. `POST /feedback` endpointini router'a bagla.

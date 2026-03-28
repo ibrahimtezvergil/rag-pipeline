@@ -1,5 +1,7 @@
 # Query Expansion Design
 
+## Status: COMPLETED
+
 ## Goal
 
 Retrieval öncesinde sorguyu kontrollü biçimde genişleterek synonym ve ifade varyasyonlarını daha iyi yakalamak. Hedef, dense/sparse/hybrid retrieval kalitesini artırmak ve bunu düşük riskli, production-ready bir akışla yapmak.

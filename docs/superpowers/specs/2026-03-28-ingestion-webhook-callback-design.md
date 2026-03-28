@@ -1,5 +1,7 @@
 # Ingestion Webhook Callback Design
 
+## Status: COMPLETED
+
 ## Amaç
 
 Async ingest job tamamlandığında veya başarısız olduğunda dış sistemleri polling yapmadan haberdar etmek.
@@ -66,7 +68,7 @@ Kurallar:
 Async ingest enqueue edildiğinde job payload içine şunlar yazılır:
 
 - `callback_url`
-- `project_id`
+- `application_id`
 - `source_type`
 
 Worker final state oluştuğunda callback için yeterli context hazır olur.
@@ -81,7 +83,7 @@ JSON body:
 {
   "document_id": "uuid",
   "ingestion_job_id": "uuid",
-  "project_id": "uuid",
+  "application_id": "uuid",
   "status": "completed|failed",
   "source_type": "pdf|web|structured|image|audio|db",
   "error_message": "optional"

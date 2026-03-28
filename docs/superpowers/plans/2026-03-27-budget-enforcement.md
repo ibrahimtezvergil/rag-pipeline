@@ -1,5 +1,7 @@
 # Budget Enforcement Implementation Plan
 
+## Status: COMPLETED
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** `latency_budget_ms` ve `token_budget` alanlarını query/chat akışında çalışan enforcement haline getirmek.

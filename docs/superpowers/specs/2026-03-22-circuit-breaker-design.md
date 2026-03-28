@@ -1,5 +1,7 @@
 # Circuit Breaker Design
 
+## Status: COMPLETED
+
 ## Goal
 
 RAG servisinin dış bağımlılık çağrılarına production-ready circuit breaker eklemek. Hedef, tekrar eden provider/Qdrant hatalarında sistemi gereksiz dış çağrılarla zorlamamak, cooldown süresince hızlı fail etmek ve mümkün olan yerlerde kontrollü fallback davranışı korumaktır.

@@ -1,8 +1,10 @@
 # Budget Enforcement Design
 
+## Status: COMPLETED
+
 ## Amaç
 
-`rag_projects.config` içindeki `latency_budget_ms` ve `token_budget` alanlarını çalışan query pipeline'a bağlamak.
+`rag_applications.config` içindeki `latency_budget_ms` ve `token_budget` alanlarını çalışan query pipeline'a bağlamak.
 
 Hedef:
 
@@ -18,7 +20,7 @@ Kapsam içi:
 
 - `QueryService.answer_question`
 - `ChatService` üzerinden dolaylı query akışı
-- project config'ten budget okuma
+- application config'ten budget okuma
 - observability alanları
 - ilgili testler
 
@@ -31,9 +33,9 @@ Kapsam dışı:
 
 ## Current State
 
-- `rag_projects.config` içinde `latency_budget_ms` ve `token_budget` alanları için şema zemini var.
+- `rag_applications.config` içinde `latency_budget_ms` ve `token_budget` alanları için şema zemini var.
 - Query akışı retrieval, rerank ve generate adımlarını çalıştırıyor ama bu budget'ları enforce etmiyor.
-- Prompt bütçesi için formatter tarafında char limit yaklaşımı var; query tarafı bu mantığı doğrudan project config ile kullanmıyor.
+- Prompt bütçesi için formatter tarafında char limit yaklaşımı var; query tarafı bu mantığı doğrudan application config ile kullanmıyor.
 
 ## Yaklaşım
 
@@ -57,7 +59,7 @@ Gerekçe:
 Akış:
 
 1. retrieval ve rerank sonrası geçen süre hesaplanır
-2. project config'ten `latency_budget_ms` alınır
+2. application config'ten `latency_budget_ms` alınır
 3. generate'e girmeden önce kalan süre hesaplanır
 4. kalan süre tanımlı minimum generate eşiğinin altındaysa LLM çağrısı yapılmaz
 5. `_fallback_answer()` çalışır
@@ -77,7 +79,7 @@ Response davranışı:
 
 ### 2. Token budget
 
-`token_budget` project config'ten okunur.
+`token_budget` application config'ten okunur.
 
 İlk sürüm approx token hesabı:
 

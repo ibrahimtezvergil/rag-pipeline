@@ -1,5 +1,7 @@
 # Scheduled Re-index Design
 
+## Status: COMPLETED
+
 ## Goal
 
 `POST /schedules` ile project bazlı tekrar eden ingestion schedule kaydetmek ve ARQ cron tick üzerinden due kayıtları async ingestion job'larına çevirmek.

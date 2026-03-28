@@ -1,5 +1,7 @@
 # Document Versioning Design
 
+## Status: COMPLETED
+
 ## Goal
 
 Ayni `project_id + source_ref` icin tekrar ingestion geldiginde yeni bir `RagDocument` version olusturmak, onceki aktif versiyonu supersede etmek ve retrieval'in yalnizca guncel versiyonu gormesini saglamak.

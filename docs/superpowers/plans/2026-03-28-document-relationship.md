@@ -1,5 +1,7 @@
 # Document Relationship Plan
 
+## Status: COMPLETED
+
 1. `RagChunk` icin `related_chunk_ids` alanini ve migration'i ekle.
 2. Repository'ye relationship update helper ekle.
 3. Ingestion sonrasi chunk relationship heuristigini hesapla ve persist et.

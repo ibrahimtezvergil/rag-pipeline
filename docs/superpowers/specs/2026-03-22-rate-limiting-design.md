@@ -1,5 +1,7 @@
 # Rate Limiting Design
 
+## Status: COMPLETED
+
 ## Goal
 
 RAG servisinin maliyetli endpoint'lerine production-ready rate limiting eklemek. Hedef, tek bir proje üzerinden query/chat/ingest flood durumlarını Redis tabanlı sliding window ile sınırlamak ve limit aşımında standart `429 + Retry-After` davranışı sağlamaktır.
@@ -22,7 +24,7 @@ Kapsam dışı:
 
 - Auth middleware `X-Project-ID` ve `X-API-Key` başlıklarını doğruluyor ve `request.state` içine yazıyor.
 - Redis zaten chat memory, queue ve health check tarafında kullanılıyor.
-- Şu an project bazlı request limiting yok; maliyetli endpoint'ler limitsiz.
+- Şu an application bazli request limiting yok; maliyetli endpoint'ler limitsiz.
 
 ## Recommended Approach
 
@@ -45,14 +47,14 @@ Neden:
 ## Key Strategy
 
 Redis key formatı:
-- `rate_limit:{project_id}:{route_name}`
+- `rate_limit:{application_id}:{route_name}`
 
 Örnek:
 - `rate_limit:proj-123:query`
 - `rate_limit:proj-123:ingest_batch`
 
 Bu dilimde limit birimi:
-- project bazlı
+- application bazli
 - endpoint bazlı
 
 ## Default Limits
@@ -142,7 +144,7 @@ Neden:
 ## Rollout
 
 Bu dilim sonunda checklist'te şu madde kapanır:
-- `Rate limiting — Redis sliding window, project_id bazlı, 429 + Retry-After`
+- `Rate limiting — Redis sliding window, application_id bazlı, 429 + Retry-After`
 
 Sonraki mantıklı adım:
 - `Circuit breaker`

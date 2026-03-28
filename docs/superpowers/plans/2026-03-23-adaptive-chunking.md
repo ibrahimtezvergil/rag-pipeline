@@ -1,5 +1,7 @@
 # Adaptive Chunking Plan
 
+## Status: COMPLETED
+
 1. Add failing chunking tests for dense/list-like content and narrative content.
 2. Add deterministic adaptive window helper to `chunking.py`.
 3. Use adaptive per-chunk window inside `_filter_and_split`.

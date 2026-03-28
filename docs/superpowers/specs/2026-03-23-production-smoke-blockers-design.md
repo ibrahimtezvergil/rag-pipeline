@@ -1,5 +1,7 @@
 # Production Smoke Blockers Design
 
+## Status: COMPLETED
+
 ## Goal
 
 `docker-compose up` ile ayağa kalkamayan ve canlı PDF ingest/query smoke testini bozan blocker'ları tek dilimde kapatmak.

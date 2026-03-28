@@ -1,5 +1,7 @@
 # Langfuse Observe Integration Design
 
+## Status: COMPLETED
+
 ## Goal
 
 FastAPI query/chat/ingest akislarina Langfuse trace eklemek; kritik servis cagrilarini child observation olarak izlemek; bunu request akislarini bozmadan ve hassas veri gondermeden yapmak.
@@ -48,7 +50,7 @@ Langfuse'a gonderilmeyecek alanlar:
 Langfuse metadata olarak gidebilecek guvenli alanlar:
 
 - `tenant_id`
-- `project_id`
+- `application_id`
 - `query_hash`
 - `retrieval_mode`
 - `source_count`
@@ -100,7 +102,7 @@ Endpoint seviyesinde yalnizca guvenli metadata set edilecek.
 - observation type: `chain`
 - metadata:
   - `tenant_id`
-  - `project_id`
+  - `application_id`
   - `query_hash`
   - `retrieval_mode`
 - cikista:
@@ -113,7 +115,7 @@ Endpoint seviyesinde yalnizca guvenli metadata set edilecek.
 - observation type: `chain`
 - metadata:
   - `tenant_id`
-  - `project_id`
+  - `application_id`
   - `document_id`
   - `source_type`
   - `mode`
