@@ -45,7 +45,7 @@ async def test_rate_limiter_allows_requests_under_limit():
     limiter = rate_limit_module.RedisSlidingWindowRateLimiter(redis=FakeRedis())
 
     result = await limiter.check(
-        project_id="project-1",
+        application_id="project-1",
         route_name="query",
         limit=2,
         window_seconds=60,
@@ -61,14 +61,14 @@ async def test_rate_limiter_rejects_requests_over_limit_and_returns_retry_after(
     limiter = rate_limit_module.RedisSlidingWindowRateLimiter(redis=FakeRedis())
 
     await limiter.check(
-        project_id="project-1",
+        application_id="project-1",
         route_name="query",
         limit=1,
         window_seconds=60,
         now=100.0,
     )
     result = await limiter.check(
-        project_id="project-1",
+        application_id="project-1",
         route_name="query",
         limit=1,
         window_seconds=60,
@@ -88,7 +88,7 @@ async def test_rate_limiter_fails_open_when_redis_errors():
     limiter = rate_limit_module.RedisSlidingWindowRateLimiter(redis=BrokenRedis())
 
     result = await limiter.check(
-        project_id="project-1",
+        application_id="project-1",
         route_name="query",
         limit=1,
         window_seconds=60,

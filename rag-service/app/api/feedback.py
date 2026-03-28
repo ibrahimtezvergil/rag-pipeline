@@ -13,8 +13,8 @@ from app.services.feedback import FeedbackService
 router = APIRouter()
 
 
-def _parse_project_id(raw_project_id: str) -> uuid.UUID:
-    return uuid.UUID(raw_project_id)
+def _parse_application_id(raw_application_id: str) -> uuid.UUID:
+    return uuid.UUID(raw_application_id)
 
 
 def _get_feedback_service(
@@ -34,7 +34,7 @@ async def create_feedback(
     payload: FeedbackCreateRequest,
     service: FeedbackService = Depends(_get_feedback_service),
 ):
-    project_id = _parse_project_id(request.state.project_id)
-    result = await service.create_feedback(payload, project_id)
+    application_id = _parse_application_id(request.state.application_id)
+    result = await service.create_feedback(payload, application_id)
     response.status_code = status.HTTP_201_CREATED
     return FeedbackCreateResponse.model_validate(result)

@@ -81,7 +81,7 @@ async def _send_callback_if_configured(
             callback_url=callback_url,
             document_id=payload["document_id"],
             ingestion_job_id=payload["ingestion_job_id"],
-            project_id=payload["project_id"],
+            project_id=payload["application_id"],
             status=status,
             source_type=payload["source_type"],
             error_message=error_message,

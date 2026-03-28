@@ -24,4 +24,4 @@ api_router.include_router(schedules_router)
 async def protected_endpoint(
     context: RequestContext = Depends(get_request_context),
 ) -> dict[str, str]:
-    return {"project_id": context.project_id, "status": "authorized"}
+    return {"application_id": context.application_id, "status": "authorized"}

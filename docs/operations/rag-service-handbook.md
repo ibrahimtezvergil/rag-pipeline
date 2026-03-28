@@ -9,7 +9,7 @@ Bu servis, farklı uygulamalardan gelen verileri tek bir RAG altyapısında topl
 Bugün hedeflenen kullanım:
 
 - CRM, mobil uygulama, içerik sitesi gibi sistemlerden veri ingest etmek
-- tenant ve project bazlı izole retrieval yapmak
+- tenant ve application bazlı izole retrieval yapmak
 - kullanıcı sorularına kaynak destekli cevap üretmek
 - düzenli senkronizasyon, yeniden indeksleme ve operasyonel gözlemlenebilirlik sağlamak
 
@@ -20,7 +20,7 @@ Bu servis bir SaaS paneli değildir. Çok kiracılı çalışma temeli vardır a
 Ana stack:
 
 - `FastAPI`: HTTP API yüzeyi
-- `PostgreSQL`: tenant, project, document, chunk, job ve metadata kaynağı
+- `PostgreSQL`: tenant, application, document, chunk, job ve metadata kaynağı
 - `Qdrant`: dense ve sparse retrieval için vektör veritabanı
 - `Redis`: queue, rate limit, query cache
 - `ARQ`: async ingest ve schedule worker
@@ -95,7 +95,7 @@ Bugün üretimde kullanılabilecek ana kabiliyetler şunlardır:
 Ana tablolar:
 
 - `rag_tenants`
-- `rag_projects`
+- `rag_applications`
 - `rag_documents`
 - `rag_chunks`
 - `rag_ingestion_jobs`
@@ -106,7 +106,7 @@ Ana tablolar:
 
 Temel ilişki:
 
-- her istek bir `project_id` bağlamında çalışır
+- her istek bir `application_id` baglaminda calisir
 - ingest ile bir `rag_document` ve buna bağlı `rag_chunks` oluşur
 - vektör karşılığı Qdrant'ta tutulur, köprü alanı `qdrant_point_id` üzerinden sağlanır
 - query aşamasında skor ve metadata Qdrant'tan, metin içeriği PostgreSQL'den alınır
@@ -132,7 +132,7 @@ Ana endpoint'ler:
 Auth modeli:
 
 - tüm korumalı çağrılarda `X-API-Key`
-- tenant/project bağlamı için `X-Project-ID`
+- tenant/application baglami icin `X-Application-ID`
 
 Referans:
 
@@ -311,7 +311,7 @@ Referans:
 
 ### Re-index ve versioning
 
-- aynı `project_id + source_ref` için yeni ingest yeni document version açar
+- ayni `application_id + source_ref` için yeni ingest yeni document version açar
 - eski sürüm `superseded` yapılır
 - unchanged chunk'lar hash ile tespit edilir
 - eski vector gerekiyorsa reuse edilir
@@ -324,7 +324,7 @@ Referans:
 
 - request fingerprint üzerinden Redis key üretilir
 - hit varsa retrieval/generation yolu atlanır
-- ilgili ingest veya delete sonrası project bazlı invalidation yapılır
+- ilgili ingest veya delete sonrası application bazli invalidation yapılır
 
 Referans:
 
@@ -378,7 +378,7 @@ Referans:
 
 Loglanan güvenli alan örnekleri:
 
-- `project_id`
+- `application_id`
 - `query_hash`
 - `retrieval_mode`
 - `embed_ms`
@@ -445,7 +445,7 @@ Beklenen durum:
 ```bash
 curl -sS -X POST http://127.0.0.1:8000/collections \
   -H 'X-API-Key: <api-key>' \
-  -H 'X-Project-ID: <project-id>' \
+  -H 'X-Application-ID: <application-id>' \
   -H 'Content-Type: application/json' \
   -d '{"name":"rag_chunks"}'
 ```
@@ -455,7 +455,7 @@ curl -sS -X POST http://127.0.0.1:8000/collections \
 ```bash
 curl -sS -X POST 'http://127.0.0.1:8000/ingest?mode=sync' \
   -H 'X-API-Key: <api-key>' \
-  -H 'X-Project-ID: <project-id>' \
+  -H 'X-Application-ID: <application-id>' \
   -H 'Content-Type: application/json' \
   -d '{
     "source_type": "structured",
@@ -482,7 +482,7 @@ curl -sS -X POST 'http://127.0.0.1:8000/ingest?mode=sync' \
 ```bash
 curl -sS -X POST http://127.0.0.1:8000/query \
   -H 'X-API-Key: <api-key>' \
-  -H 'X-Project-ID: <project-id>' \
+  -H 'X-Application-ID: <application-id>' \
   -H 'Content-Type: application/json' \
   -d '{
     "question": "Which invoice was paid and for which customer?",
@@ -498,7 +498,7 @@ curl -sS -X POST http://127.0.0.1:8000/query \
 ```bash
 curl -sS -X POST http://127.0.0.1:8000/schedules \
   -H 'X-API-Key: <api-key>' \
-  -H 'X-Project-ID: <project-id>' \
+  -H 'X-Application-ID: <application-id>' \
   -H 'Content-Type: application/json' \
   -d '{
     "cron_expr": "0 3 * * *",
@@ -548,7 +548,7 @@ Bu servis şu senaryolarda uygundur:
 
 - birden fazla uygulamadan gelen veriyi tek retrieval katmanında toplamak
 - günlük veya periyodik ingest ile bilgi tabanını güncel tutmak
-- tenant/project izolasyonlu source-backed cevap üretmek
+- tenant/application izolasyonlu source-backed cevap üretmek
 - PDF, web, structured, image ve audio verileri aynı altyapıda işlemek
 
 Şu senaryolarda henüz eksik kalır:

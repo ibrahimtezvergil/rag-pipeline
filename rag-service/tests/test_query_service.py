@@ -12,7 +12,7 @@ from app.services.query import QueryService
 @pytest.mark.asyncio
 async def test_query_service_answers_from_indexed_documents(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -27,8 +27,8 @@ async def test_query_service_answers_from_indexed_documents(
 
     repository = IngestionRepository(integration_session)
     await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="web",
         source_ref="https://example.com/q1-report",
         status="indexed",
@@ -39,8 +39,8 @@ async def test_query_service_answers_from_indexed_documents(
         },
     )
     await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="web",
         source_ref="https://example.com/team-update",
         status="indexed",
@@ -55,7 +55,7 @@ async def test_query_service_answers_from_indexed_documents(
     service = QueryService(integration_session)
     result = await service.answer_question(
         "Revenue in Q1?",
-        seeded_project["project_id"],
+        seeded_application["application_id"],
     )
 
     assert "Revenue grew sharply in Q1" in result["answer"]
@@ -66,7 +66,7 @@ async def test_query_service_answers_from_indexed_documents(
 
 
 @pytest.mark.asyncio
-async def test_query_service_uses_query_embedding_task(monkeypatch, integration_session, seeded_project):
+async def test_query_service_uses_query_embedding_task(monkeypatch, integration_session, seeded_application):
     captured: dict[str, str] = {}
 
     async def fake_embed_query_text(question: str):
@@ -81,7 +81,7 @@ async def test_query_service_uses_query_embedding_task(monkeypatch, integration_
     monkeypatch.setattr(query_module, "embed_query_text", fake_embed_query_text, raising=False)
 
     service = QueryService(integration_session)
-    await service.answer_question("Revenue in Q1?", seeded_project["project_id"])
+    await service.answer_question("Revenue in Q1?", seeded_application["application_id"])
 
     assert captured["question"] == "Revenue in Q1?"
 
@@ -89,7 +89,7 @@ async def test_query_service_uses_query_embedding_task(monkeypatch, integration_
 @pytest.mark.asyncio
 async def test_query_service_generates_answer_from_final_sources(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -122,8 +122,8 @@ async def test_query_service_generates_answer_from_final_sources(
 
     repository = IngestionRepository(integration_session)
     await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="web",
         source_ref="https://example.com/q1-report",
         status="indexed",
@@ -136,7 +136,7 @@ async def test_query_service_generates_answer_from_final_sources(
     await repository.commit()
 
     service = QueryService(integration_session)
-    result = await service.answer_question("Revenue in Q1?", seeded_project["project_id"])
+    result = await service.answer_question("Revenue in Q1?", seeded_application["application_id"])
 
     assert result["answer"] == "Generated answer"
     assert captured["question"] == "Revenue in Q1?"
@@ -148,7 +148,7 @@ async def test_query_service_generates_answer_from_final_sources(
 @pytest.mark.asyncio
 async def test_query_service_returns_empty_without_calling_llm(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -166,7 +166,7 @@ async def test_query_service_returns_empty_without_calling_llm(
     monkeypatch.setattr(query_module, "generate_text", fake_generate, raising=False)
 
     service = QueryService(integration_session)
-    result = await service.answer_question("Unknown question", seeded_project["project_id"])
+    result = await service.answer_question("Unknown question", seeded_application["application_id"])
 
     assert result["retrieval_mode"] == "empty"
     assert result["answer"] == "Bu proje icin sorgulanabilir indexed dokuman bulunamadi."
@@ -178,7 +178,7 @@ async def test_query_service_returns_empty_without_calling_llm(
 @pytest.mark.asyncio
 async def test_query_service_falls_back_when_llm_generate_raises(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -206,8 +206,8 @@ async def test_query_service_falls_back_when_llm_generate_raises(
 
     repository = IngestionRepository(integration_session)
     await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="web",
         source_ref="https://example.com/q1-report",
         status="indexed",
@@ -220,7 +220,7 @@ async def test_query_service_falls_back_when_llm_generate_raises(
     await repository.commit()
 
     service = QueryService(integration_session)
-    result = await service.answer_question("Revenue in Q1?", seeded_project["project_id"])
+    result = await service.answer_question("Revenue in Q1?", seeded_application["application_id"])
 
     assert "Revenue grew sharply in Q1" in result["answer"]
     assert result["sources"][0]["title"] == "Q1 Report"
@@ -229,7 +229,7 @@ async def test_query_service_falls_back_when_llm_generate_raises(
 @pytest.mark.asyncio
 async def test_query_service_uses_fallback_answer_when_llm_breaker_open(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -257,8 +257,8 @@ async def test_query_service_uses_fallback_answer_when_llm_breaker_open(
 
     repository = IngestionRepository(integration_session)
     await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="web",
         source_ref="https://example.com/q2-report",
         status="indexed",
@@ -271,7 +271,7 @@ async def test_query_service_uses_fallback_answer_when_llm_breaker_open(
     await repository.commit()
 
     service = QueryService(integration_session)
-    result = await service.answer_question("Expansion revenue?", seeded_project["project_id"])
+    result = await service.answer_question("Expansion revenue?", seeded_application["application_id"])
 
     assert "Expansion revenue improved in Q2" in result["answer"]
     assert result["sources"][0]["title"] == "Q2 Report"
@@ -280,7 +280,7 @@ async def test_query_service_uses_fallback_answer_when_llm_breaker_open(
 @pytest.mark.asyncio
 async def test_query_service_emits_query_completed_event(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -316,8 +316,8 @@ async def test_query_service_emits_query_completed_event(
 
     repository = IngestionRepository(integration_session)
     await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="web",
         source_ref="https://example.com/q1-report",
         status="indexed",
@@ -330,13 +330,13 @@ async def test_query_service_emits_query_completed_event(
     await repository.commit()
 
     service = QueryService(integration_session)
-    await service.answer_question("Revenue in Q1?", seeded_project["project_id"])
+    await service.answer_question("Revenue in Q1?", seeded_application["application_id"])
 
     assert len(events) == 1
     event_name, payload = events[0]
     assert event_name == "query.completed"
-    assert payload["tenant_id"] == str(seeded_project["tenant_id"])
-    assert payload["project_id"] == str(seeded_project["project_id"])
+    assert payload["tenant_id"] == str(seeded_application["tenant_id"])
+    assert payload["application_id"] == str(seeded_application["application_id"])
     assert payload["retrieval_mode"] == "metadata_fallback"
     assert payload["source_count"] == 1
     assert payload["top_chunk_score"] is None
@@ -349,7 +349,7 @@ async def test_query_service_emits_query_completed_event(
 @pytest.mark.asyncio
 async def test_query_service_filters_by_scope_id(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -364,8 +364,8 @@ async def test_query_service_filters_by_scope_id(
 
     repository = IngestionRepository(integration_session)
     await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -379,8 +379,8 @@ async def test_query_service_filters_by_scope_id(
         },
     )
     await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -398,7 +398,7 @@ async def test_query_service_filters_by_scope_id(
     service = QueryService(integration_session)
     result = await service.answer_question(
         "negotiation details",
-        seeded_project["project_id"],
+        seeded_application["application_id"],
         scope_type="customer",
         scope_id="cust_42",
     )
@@ -410,7 +410,7 @@ async def test_query_service_filters_by_scope_id(
 @pytest.mark.asyncio
 async def test_query_service_filters_by_tags(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -425,8 +425,8 @@ async def test_query_service_filters_by_tags(
 
     repository = IngestionRepository(integration_session)
     await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -438,8 +438,8 @@ async def test_query_service_filters_by_tags(
         },
     )
     await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -455,7 +455,7 @@ async def test_query_service_filters_by_tags(
     service = QueryService(integration_session)
     result = await service.answer_question(
         "daily notes",
-        seeded_project["project_id"],
+        seeded_application["application_id"],
         tags=["diet"],
     )
 
@@ -466,7 +466,7 @@ async def test_query_service_filters_by_tags(
 @pytest.mark.asyncio
 async def test_query_service_filters_by_entity_id(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -481,8 +481,8 @@ async def test_query_service_filters_by_entity_id(
 
     repository = IngestionRepository(integration_session)
     await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -494,8 +494,8 @@ async def test_query_service_filters_by_entity_id(
         },
     )
     await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -511,7 +511,7 @@ async def test_query_service_filters_by_entity_id(
     service = QueryService(integration_session)
     result = await service.answer_question(
         "customer summary",
-        seeded_project["project_id"],
+        seeded_application["application_id"],
         entity_id="cust_42",
     )
 
@@ -522,7 +522,7 @@ async def test_query_service_filters_by_entity_id(
 @pytest.mark.asyncio
 async def test_query_service_filters_by_snapshot_date(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -537,8 +537,8 @@ async def test_query_service_filters_by_snapshot_date(
 
     repository = IngestionRepository(integration_session)
     await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -550,8 +550,8 @@ async def test_query_service_filters_by_snapshot_date(
         },
     )
     await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -567,7 +567,7 @@ async def test_query_service_filters_by_snapshot_date(
     service = QueryService(integration_session)
     result = await service.answer_question(
         "pipeline summary",
-        seeded_project["project_id"],
+        seeded_application["application_id"],
         snapshot_date="2026-03-15",
     )
 
@@ -578,7 +578,7 @@ async def test_query_service_filters_by_snapshot_date(
 @pytest.mark.asyncio
 async def test_query_service_uses_qdrant_payload_filter_for_metadata_candidates(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -617,8 +617,8 @@ async def test_query_service_uses_qdrant_payload_filter_for_metadata_candidates(
 
     repository = IngestionRepository(integration_session)
     matching_document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -634,8 +634,8 @@ async def test_query_service_uses_qdrant_payload_filter_for_metadata_candidates(
         },
     )
     await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -655,7 +655,7 @@ async def test_query_service_uses_qdrant_payload_filter_for_metadata_candidates(
     service = QueryService(integration_session, vector_store=FakeVectorStore())
     result = await service.answer_question(
         "customer summary",
-        seeded_project["project_id"],
+        seeded_application["application_id"],
         scope_type="customer",
         scope_id="cust_42",
         entity_id="cust_42",
@@ -664,7 +664,7 @@ async def test_query_service_uses_qdrant_payload_filter_for_metadata_candidates(
     )
 
     assert captured == {
-        "tenant_id": str(seeded_project["tenant_id"]),
+        "tenant_id": str(seeded_application["tenant_id"]),
         "scope_type": "customer",
         "scope_id": "cust_42",
         "entity_id": "cust_42",
@@ -679,7 +679,7 @@ async def test_query_service_uses_qdrant_payload_filter_for_metadata_candidates(
 @pytest.mark.asyncio
 async def test_query_service_uses_qdrant_semantic_ranking_order(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -704,7 +704,7 @@ async def test_query_service_uses_qdrant_semantic_ranking_order(
             limit,
         ):
             assert query_vector == [0.11, 0.22]
-            assert tenant_id == str(seeded_project["tenant_id"])
+            assert tenant_id == str(seeded_application["tenant_id"])
             assert limit == 6
             return [
                 {"document_id": str(semantic_doc.id), "chunk_id": "chunk-semantic", "score": 0.99},
@@ -718,8 +718,8 @@ async def test_query_service_uses_qdrant_semantic_ranking_order(
 
     repository = IngestionRepository(integration_session)
     keyword_doc = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -730,8 +730,8 @@ async def test_query_service_uses_qdrant_semantic_ranking_order(
         },
     )
     semantic_doc = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -744,7 +744,7 @@ async def test_query_service_uses_qdrant_semantic_ranking_order(
     await repository.commit()
 
     service = QueryService(integration_session, vector_store=FakeVectorStore())
-    result = await service.answer_question("revenue growth", seeded_project["project_id"])
+    result = await service.answer_question("revenue growth", seeded_application["application_id"])
 
     assert result["retrieval_mode"] == "hybrid_rrf"
     assert [source["title"] for source in result["sources"]] == ["Semantic Match", "Keyword Match"]
@@ -753,7 +753,7 @@ async def test_query_service_uses_qdrant_semantic_ranking_order(
 @pytest.mark.asyncio
 async def test_query_service_builds_sources_from_retrieved_chunk_content(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -785,8 +785,8 @@ async def test_query_service_builds_sources_from_retrieved_chunk_content(
 
     repository = IngestionRepository(integration_session)
     document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -836,7 +836,7 @@ async def test_query_service_builds_sources_from_retrieved_chunk_content(
     await repository.commit()
 
     service = QueryService(integration_session, vector_store=FakeVectorStore())
-    result = await service.answer_question("renewal quote", seeded_project["project_id"])
+    result = await service.answer_question("renewal quote", seeded_application["application_id"])
 
     assert result["answer"] == (
         "Chunked Customer Snapshot: Parent chunk content. "
@@ -872,7 +872,7 @@ async def test_query_service_builds_sources_from_retrieved_chunk_content(
 @pytest.mark.asyncio
 async def test_query_service_resolves_child_hit_to_parent_context_block(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -891,8 +891,8 @@ async def test_query_service_resolves_child_hit_to_parent_context_block(
 
     repository = IngestionRepository(integration_session)
     document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -941,7 +941,7 @@ async def test_query_service_resolves_child_hit_to_parent_context_block(
     await repository.commit()
 
     service = QueryService(integration_session, vector_store=FakeVectorStore())
-    result = await service.answer_question("refund window", seeded_project["project_id"])
+    result = await service.answer_question("refund window", seeded_application["application_id"])
 
     assert result["sources"][0]["chunk_id"] == str(child.id)
     assert result["sources"][0]["resolved_chunk_id"] == str(parent.id)
@@ -952,7 +952,7 @@ async def test_query_service_resolves_child_hit_to_parent_context_block(
 @pytest.mark.asyncio
 async def test_query_service_uses_sparse_qdrant_when_requested(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -987,8 +987,8 @@ async def test_query_service_uses_sparse_qdrant_when_requested(
 
     repository = IngestionRepository(integration_session)
     document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -1040,11 +1040,11 @@ async def test_query_service_uses_sparse_qdrant_when_requested(
     service = QueryService(integration_session, vector_store=FakeVectorStore())
     result = await service.answer_question(
         "renewal billing",
-        seeded_project["project_id"],
+        seeded_application["application_id"],
         retrieval_mode="sparse",
     )
 
-    assert captured["tenant_id"] == str(seeded_project["tenant_id"])
+    assert captured["tenant_id"] == str(seeded_application["tenant_id"])
     assert captured["limit"] == 6
     assert captured["sparse_query"]["indices"]
     assert result["retrieval_mode"] == "sparse_qdrant"
@@ -1054,7 +1054,7 @@ async def test_query_service_uses_sparse_qdrant_when_requested(
 @pytest.mark.asyncio
 async def test_query_service_uses_hybrid_rrf_by_default(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -1104,8 +1104,8 @@ async def test_query_service_uses_hybrid_rrf_by_default(
 
     repository = IngestionRepository(integration_session)
     dense_document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -1114,8 +1114,8 @@ async def test_query_service_uses_hybrid_rrf_by_default(
         metadata={"content_text": "semantic revenue growth outlook"},
     )
     shared_document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -1124,8 +1124,8 @@ async def test_query_service_uses_hybrid_rrf_by_default(
         metadata={"content_text": "renewal billing revenue growth"},
     )
     sparse_document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -1239,7 +1239,7 @@ async def test_query_service_uses_hybrid_rrf_by_default(
     await repository.commit()
 
     service = QueryService(integration_session, vector_store=FakeVectorStore())
-    result = await service.answer_question("renewal revenue", seeded_project["project_id"])
+    result = await service.answer_question("renewal revenue", seeded_application["application_id"])
 
     assert result["retrieval_mode"] == "hybrid_rrf"
     assert [source["title"] for source in result["sources"]] == [
@@ -1253,7 +1253,7 @@ async def test_query_service_uses_hybrid_rrf_by_default(
 @pytest.mark.asyncio
 async def test_query_service_reranks_hybrid_candidates_when_enabled(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -1288,8 +1288,8 @@ async def test_query_service_reranks_hybrid_candidates_when_enabled(
 
     repository = IngestionRepository(integration_session)
     first_document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -1298,8 +1298,8 @@ async def test_query_service_reranks_hybrid_candidates_when_enabled(
         metadata={"content_text": "renewal timeline update"},
     )
     second_document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -1377,7 +1377,7 @@ async def test_query_service_reranks_hybrid_candidates_when_enabled(
     )
     first_chunk = chunks[1]
     second_chunk = chunks[3]
-    project = await integration_session.get(query_module.RagProject, seeded_project["project_id"])
+    project = await integration_session.get(query_module.RagApplication, seeded_application["application_id"])
     project.config = {"use_reranker": True}
     await integration_session.commit()
 
@@ -1386,7 +1386,7 @@ async def test_query_service_reranks_hybrid_candidates_when_enabled(
         vector_store=FakeVectorStore(),
         reranker=FakeReranker(),
     )
-    result = await service.answer_question("renewal billing", seeded_project["project_id"])
+    result = await service.answer_question("renewal billing", seeded_application["application_id"])
 
     assert result["retrieval_mode"] == "hybrid_rrf_rerank"
     assert [source["title"] for source in result["sources"]] == ["Second Candidate", "First Candidate"]
@@ -1396,7 +1396,7 @@ async def test_query_service_reranks_hybrid_candidates_when_enabled(
 @pytest.mark.asyncio
 async def test_query_service_falls_back_when_reranker_fails(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -1422,8 +1422,8 @@ async def test_query_service_falls_back_when_reranker_fails(
 
     repository = IngestionRepository(integration_session)
     document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -1468,7 +1468,7 @@ async def test_query_service_falls_back_when_reranker_fails(
         ]
     )
     chunk = chunks[1]
-    project = await integration_session.get(query_module.RagProject, seeded_project["project_id"])
+    project = await integration_session.get(query_module.RagApplication, seeded_application["application_id"])
     project.config = {"use_reranker": True}
     await integration_session.commit()
 
@@ -1477,7 +1477,7 @@ async def test_query_service_falls_back_when_reranker_fails(
         vector_store=FakeVectorStore(),
         reranker=FailingReranker(),
     )
-    result = await service.answer_question("renewal", seeded_project["project_id"])
+    result = await service.answer_question("renewal", seeded_application["application_id"])
 
     assert result["retrieval_mode"] == "hybrid_rrf"
     assert result["sources"][0]["chunk_id"] == str(chunk.id)
@@ -1486,7 +1486,7 @@ async def test_query_service_falls_back_when_reranker_fails(
 @pytest.mark.asyncio
 async def test_query_service_skips_rerank_when_breaker_open(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -1512,8 +1512,8 @@ async def test_query_service_skips_rerank_when_breaker_open(
 
     repository = IngestionRepository(integration_session)
     document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-records",
         status="indexed",
@@ -1558,7 +1558,7 @@ async def test_query_service_skips_rerank_when_breaker_open(
         ]
     )
     chunk = chunks[1]
-    project = await integration_session.get(query_module.RagProject, seeded_project["project_id"])
+    project = await integration_session.get(query_module.RagApplication, seeded_application["application_id"])
     project.config = {"use_reranker": True}
     await integration_session.commit()
 
@@ -1567,7 +1567,7 @@ async def test_query_service_skips_rerank_when_breaker_open(
         vector_store=FakeVectorStore(),
         reranker=BreakerOpenReranker(),
     )
-    result = await service.answer_question("renewal", seeded_project["project_id"])
+    result = await service.answer_question("renewal", seeded_application["application_id"])
 
     assert result["retrieval_mode"] == "hybrid_rrf"
     assert result["sources"][0]["chunk_id"] == str(chunk.id)
@@ -1622,7 +1622,7 @@ async def test_query_service_uses_expanded_query_for_retrieval(monkeypatch):
         config = {}
 
     class FakeSession:
-        async def get(self, model, project_id):
+        async def get(self, model, application_id):
             return FakeProject()
 
     class NoopCache:
@@ -1652,11 +1652,11 @@ async def test_query_service_uses_expanded_query_for_retrieval(monkeypatch):
         captured["embed_question"] = question
         return {"values": [0.1, 0.2]}
 
-    async def fake_semantic_ranked_document_ids(self, project_id, **kwargs):
+    async def fake_semantic_ranked_document_ids(self, application_id, **kwargs):
         captured["semantic_vector"] = kwargs["query_vector"]
         return [], [], {}
 
-    async def fake_sparse_ranked_document_ids(self, project_id, **kwargs):
+    async def fake_sparse_ranked_document_ids(self, application_id, **kwargs):
         captured["sparse_question"] = kwargs["question"]
         return [], [], {}
 
@@ -1693,7 +1693,7 @@ async def test_query_service_uses_original_question_for_answer_prompt(monkeypatc
         metadata_json = {"content_text": "invoice billing payment context"}
 
     class FakeSession:
-        async def get(self, model, project_id):
+        async def get(self, model, application_id):
             return FakeProject()
 
     class NoopCache:
@@ -1722,10 +1722,10 @@ async def test_query_service_uses_original_question_for_answer_prompt(monkeypatc
     async def fake_embed_query_text(question: str):
         return {"values": [0.1, 0.2]}
 
-    async def fake_semantic_ranked_document_ids(self, project_id, **kwargs):
+    async def fake_semantic_ranked_document_ids(self, application_id, **kwargs):
         return None, None, {}
 
-    async def fake_sparse_ranked_document_ids(self, project_id, **kwargs):
+    async def fake_sparse_ranked_document_ids(self, application_id, **kwargs):
         return None, None, {}
 
     async def fake_get_indexed_documents(self, *args, **kwargs):
@@ -1769,7 +1769,7 @@ async def test_query_service_skips_llm_when_latency_budget_is_exhausted(monkeypa
         metadata_json = {"content_text": "budget context"}
 
     class FakeSession:
-        async def get(self, model, project_id):
+        async def get(self, model, application_id):
             return FakeProject()
 
     class NoopCache:
@@ -1785,10 +1785,10 @@ async def test_query_service_skips_llm_when_latency_budget_is_exhausted(monkeypa
     async def fake_embed_query_text(question: str):
         return {"values": [0.1, 0.2]}
 
-    async def fake_semantic_ranked_document_ids(self, project_id, **kwargs):
+    async def fake_semantic_ranked_document_ids(self, application_id, **kwargs):
         return None, None, {}
 
-    async def fake_sparse_ranked_document_ids(self, project_id, **kwargs):
+    async def fake_sparse_ranked_document_ids(self, application_id, **kwargs):
         return None, None, {}
 
     async def fake_get_indexed_documents(self, *args, **kwargs):
@@ -1844,7 +1844,7 @@ async def test_query_service_trims_prompt_to_token_budget(monkeypatch):
         metadata_json = {"content_text": "budget context"}
 
     class FakeSession:
-        async def get(self, model, project_id):
+        async def get(self, model, application_id):
             return FakeProject()
 
     class NoopCache:
@@ -1860,10 +1860,10 @@ async def test_query_service_trims_prompt_to_token_budget(monkeypatch):
     async def fake_embed_query_text(question: str):
         return {"values": [0.1, 0.2]}
 
-    async def fake_semantic_ranked_document_ids(self, project_id, **kwargs):
+    async def fake_semantic_ranked_document_ids(self, application_id, **kwargs):
         return None, None, {}
 
-    async def fake_sparse_ranked_document_ids(self, project_id, **kwargs):
+    async def fake_sparse_ranked_document_ids(self, application_id, **kwargs):
         return None, None, {}
 
     async def fake_get_indexed_documents(self, *args, **kwargs):
@@ -1931,7 +1931,7 @@ async def test_query_service_keeps_full_prompt_when_token_budget_missing(monkeyp
         metadata_json = {"content_text": "budget context"}
 
     class FakeSession:
-        async def get(self, model, project_id):
+        async def get(self, model, application_id):
             return FakeProject()
 
     class NoopCache:
@@ -1947,10 +1947,10 @@ async def test_query_service_keeps_full_prompt_when_token_budget_missing(monkeyp
     async def fake_embed_query_text(question: str):
         return {"values": [0.1, 0.2]}
 
-    async def fake_semantic_ranked_document_ids(self, project_id, **kwargs):
+    async def fake_semantic_ranked_document_ids(self, application_id, **kwargs):
         return None, None, {}
 
-    async def fake_sparse_ranked_document_ids(self, project_id, **kwargs):
+    async def fake_sparse_ranked_document_ids(self, application_id, **kwargs):
         return None, None, {}
 
     async def fake_get_indexed_documents(self, *args, **kwargs):
@@ -2000,7 +2000,7 @@ async def test_query_service_keeps_full_prompt_when_token_budget_missing(monkeyp
 @pytest.mark.asyncio
 async def test_query_service_applies_project_top_k_to_final_sources(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -2037,8 +2037,8 @@ async def test_query_service_applies_project_top_k_to_final_sources(
     documents = []
     for idx in range(3):
         document = await repository.create_document(
-            project_id=seeded_project["project_id"],
-            tenant_id=seeded_project["tenant_id"],
+            application_id=seeded_application["application_id"],
+            tenant_id=seeded_application["tenant_id"],
             source_type="structured",
             source_ref=f"inline://structured-{idx}",
             status="indexed",
@@ -2088,12 +2088,12 @@ async def test_query_service_applies_project_top_k_to_final_sources(
         ]
     )
     chunks = [created_chunks[3], created_chunks[4], created_chunks[5]]
-    project = await integration_session.get(query_module.RagProject, seeded_project["project_id"])
+    project = await integration_session.get(query_module.RagApplication, seeded_application["application_id"])
     project.config = {"top_k": 2, "rerank_top_n": 2}
     await integration_session.commit()
 
     service = QueryService(integration_session, vector_store=FakeVectorStore(), reranker=FakeReranker())
-    result = await service.answer_question("candidate", seeded_project["project_id"])
+    result = await service.answer_question("candidate", seeded_application["application_id"])
 
     assert len(result["sources"]) == 2
 
@@ -2101,7 +2101,7 @@ async def test_query_service_applies_project_top_k_to_final_sources(
 @pytest.mark.asyncio
 async def test_query_service_applies_score_threshold_with_minimum_one_result(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -2129,8 +2129,8 @@ async def test_query_service_applies_score_threshold_with_minimum_one_result(
 
     repository = IngestionRepository(integration_session)
     first_document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-a",
         status="indexed",
@@ -2139,8 +2139,8 @@ async def test_query_service_applies_score_threshold_with_minimum_one_result(
         metadata={"content_text": "threshold document a"},
     )
     second_document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://structured-b",
         status="indexed",
@@ -2218,7 +2218,7 @@ async def test_query_service_applies_score_threshold_with_minimum_one_result(
     )
     first_chunk = created_chunks[1]
     second_chunk = created_chunks[3]
-    project = await integration_session.get(query_module.RagProject, seeded_project["project_id"])
+    project = await integration_session.get(query_module.RagApplication, seeded_application["application_id"])
     project.config = {
         "retrieval": {
             "hybrid": {
@@ -2229,7 +2229,7 @@ async def test_query_service_applies_score_threshold_with_minimum_one_result(
     await integration_session.commit()
 
     service = QueryService(integration_session, vector_store=FakeVectorStore())
-    result = await service.answer_question("threshold", seeded_project["project_id"])
+    result = await service.answer_question("threshold", seeded_application["application_id"])
 
     assert len(result["sources"]) == 1
     assert result["sources"][0]["chunk_id"] == str(first_chunk.id)
@@ -2238,7 +2238,7 @@ async def test_query_service_applies_score_threshold_with_minimum_one_result(
 @pytest.mark.asyncio
 async def test_query_service_queries_multiple_collections_with_rrf_merge(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -2270,8 +2270,8 @@ async def test_query_service_queries_multiple_collections_with_rrf_merge(
 
     repository = IngestionRepository(integration_session)
     first_document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://crm",
         status="indexed",
@@ -2280,8 +2280,8 @@ async def test_query_service_queries_multiple_collections_with_rrf_merge(
         metadata={"content_text": "crm content"},
     )
     second_document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://support",
         status="indexed",
@@ -2368,7 +2368,7 @@ async def test_query_service_queries_multiple_collections_with_rrf_merge(
     )
     result = await service.answer_question(
         "crm support",
-        seeded_project["project_id"],
+        seeded_application["application_id"],
         collections=["crm_docs", "support_docs"],
         merge_strategy="rrf",
     )
@@ -2380,7 +2380,7 @@ async def test_query_service_queries_multiple_collections_with_rrf_merge(
 @pytest.mark.asyncio
 async def test_query_service_applies_negative_filters_to_final_sources(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -2408,8 +2408,8 @@ async def test_query_service_applies_negative_filters_to_final_sources(
 
     repository = IngestionRepository(integration_session)
     first_document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://crm",
         status="indexed",
@@ -2418,8 +2418,8 @@ async def test_query_service_applies_negative_filters_to_final_sources(
         metadata={"content_text": "keep content"},
     )
     second_document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://support",
         status="indexed",
@@ -2502,7 +2502,7 @@ async def test_query_service_applies_negative_filters_to_final_sources(
     service = QueryService(integration_session, vector_store=FakeVectorStore())
     result = await service.answer_question(
         "filter",
-        seeded_project["project_id"],
+        seeded_application["application_id"],
         exclude_sources=["inline://support"],
         exclude_documents=[str(second_document.id)],
     )
@@ -2514,7 +2514,7 @@ async def test_query_service_applies_negative_filters_to_final_sources(
 @pytest.mark.asyncio
 async def test_query_service_applies_acl_filter_to_final_sources(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -2545,8 +2545,8 @@ async def test_query_service_applies_acl_filter_to_final_sources(
 
     repository = IngestionRepository(integration_session)
     first_document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://crm",
         status="indexed",
@@ -2555,8 +2555,8 @@ async def test_query_service_applies_acl_filter_to_final_sources(
         metadata={"content_text": "allowed"},
     )
     second_document = await repository.create_document(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="structured",
         source_ref="inline://support",
         status="indexed",
@@ -2639,7 +2639,7 @@ async def test_query_service_applies_acl_filter_to_final_sources(
     service = QueryService(integration_session, vector_store=FakeVectorStore())
     result = await service.answer_question(
         "acl",
-        seeded_project["project_id"],
+        seeded_application["application_id"],
         acl=["tenant:42"],
     )
 
@@ -2651,7 +2651,7 @@ async def test_query_service_applies_acl_filter_to_final_sources(
 @pytest.mark.asyncio
 async def test_query_service_returns_empty_mode_when_no_documents(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_embed_query_text(question: str):
@@ -2665,7 +2665,7 @@ async def test_query_service_returns_empty_mode_when_no_documents(
     monkeypatch.setattr(query_module, "embed_query_text", fake_embed_query_text, raising=False)
 
     service = QueryService(integration_session)
-    result = await service.answer_question("missing context", seeded_project["project_id"])
+    result = await service.answer_question("missing context", seeded_application["application_id"])
 
     assert result["retrieval_mode"] == "empty"
     assert result["sources"] == []
@@ -2677,7 +2677,7 @@ async def test_query_service_updates_trace_metadata_with_query_hash_only(
     monkeypatch,
 ):
     updates: list[dict[str, object]] = []
-    project_id = uuid4()
+    application_id = uuid4()
     tenant_id = uuid4()
 
     async def fake_embed_query_text(question: str):
@@ -2690,7 +2690,7 @@ async def test_query_service_updates_trace_metadata_with_query_hash_only(
 
     class FakeSession:
         async def get(self, model, key):
-            return SimpleNamespace(id=project_id, tenant_id=tenant_id, config={})
+            return SimpleNamespace(id=application_id, tenant_id=tenant_id, config={})
 
     monkeypatch.setattr(query_module, "embed_query_text", fake_embed_query_text, raising=False)
     monkeypatch.setattr(
@@ -2705,11 +2705,11 @@ async def test_query_service_updates_trace_metadata_with_query_hash_only(
     monkeypatch.setattr(QueryService, "_get_indexed_documents", fake_get_indexed_documents, raising=False)
 
     service = QueryService(FakeSession())
-    await service.answer_question("Revenue in Q1?", project_id)
+    await service.answer_question("Revenue in Q1?", application_id)
 
     assert updates
     metadata = updates[0]["metadata"]
-    assert metadata["project_id"] == str(project_id)
+    assert metadata["application_id"] == str(application_id)
     assert metadata["tenant_id"] == str(tenant_id)
     assert "query_hash" in metadata
     assert "question" not in metadata
@@ -2768,8 +2768,8 @@ async def test_query_service_stores_response_in_cache_on_miss(monkeypatch):
         async def get(self, cache_key):
             return None
 
-        async def set(self, *, cache_key, project_id, value):
-            stored.append((cache_key, project_id, value))
+        async def set(self, *, cache_key, application_id, value):
+            stored.append((cache_key, application_id, value))
 
         def build_key(self, **kwargs):
             return "query_cache:item:test"
@@ -2809,7 +2809,7 @@ async def test_query_service_stores_response_in_cache_on_miss(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_query_service_demotes_chunks_with_negative_feedback(monkeypatch):
-    project_id = UUID("00000000-0000-0000-0000-000000000002")
+    application_id = UUID("00000000-0000-0000-0000-000000000002")
     tenant_id = UUID("00000000-0000-0000-0000-000000000001")
     first_document_id = uuid4()
     second_document_id = uuid4()
@@ -2818,7 +2818,7 @@ async def test_query_service_demotes_chunks_with_negative_feedback(monkeypatch):
 
     class FakeSession:
         async def get(self, model, key):
-            return SimpleNamespace(id=project_id, tenant_id=tenant_id, config={})
+            return SimpleNamespace(id=application_id, tenant_id=tenant_id, config={})
 
     class FakeExpansionService:
         async def expand(self, question, use_llm=False):
@@ -2835,7 +2835,7 @@ async def test_query_service_demotes_chunks_with_negative_feedback(monkeypatch):
             return "query_cache:item:test"
 
     class FakeFeedbackRepository:
-        async def get_feedback_summary(self, *, project_id, chunk_ids):
+        async def get_feedback_summary(self, *, application_id, chunk_ids):
             assert chunk_ids == [first_chunk_id, second_chunk_id]
             return {
                 first_chunk_id: {"up": 0, "down": 3},
@@ -2850,13 +2850,13 @@ async def test_query_service_demotes_chunks_with_negative_feedback(monkeypatch):
             "dimension": 2,
         }
 
-    async def fake_semantic_ranked_document_ids(self, project_id, **kwargs):
+    async def fake_semantic_ranked_document_ids(self, application_id, **kwargs):
         return [first_document_id, second_document_id], [first_chunk_id, second_chunk_id], {
             first_chunk_id: 0.99,
             second_chunk_id: 0.95,
         }
 
-    async def fake_get_indexed_documents(self, project_id, **kwargs):
+    async def fake_get_indexed_documents(self, application_id, **kwargs):
         return [
             SimpleNamespace(id=first_document_id, title="Doc 1", source_ref="doc-1", metadata_json={}),
             SimpleNamespace(id=second_document_id, title="Doc 2", source_ref="doc-2", metadata_json={}),
@@ -2901,7 +2901,7 @@ async def test_query_service_demotes_chunks_with_negative_feedback(monkeypatch):
         query_cache=FakeCache(),
         feedback_repository=FakeFeedbackRepository(),
     )
-    result = await service.answer_question("Which invoice was paid?", project_id, retrieval_mode="dense")
+    result = await service.answer_question("Which invoice was paid?", application_id, retrieval_mode="dense")
 
     assert result["sources"][0]["chunk_id"] == str(second_chunk_id)
     assert result["sources"][1]["chunk_id"] == str(first_chunk_id)

@@ -43,21 +43,21 @@ def test_query_cache_build_key_is_deterministic_and_scoped():
     first = service.build_key(
         question="Revenue in Q1?",
         tenant_id="tenant-1",
-        project_id="project-1",
+        application_id="project-1",
         scope_id="customer-1",
         tags=["crm"],
     )
     second = service.build_key(
         question="Revenue in Q1?",
         tenant_id="tenant-1",
-        project_id="project-1",
+        application_id="project-1",
         scope_id="customer-1",
         tags=["crm"],
     )
     different = service.build_key(
         question="Revenue in Q1?",
         tenant_id="tenant-2",
-        project_id="project-1",
+        application_id="project-1",
         scope_id="customer-1",
         tags=["crm"],
     )
@@ -71,10 +71,10 @@ def test_query_cache_build_key_is_deterministic_and_scoped():
 async def test_query_cache_get_set_and_project_index():
     redis = FakeRedis()
     service = query_cache_module.RedisQueryCache(redis=redis, ttl_seconds=3600)
-    cache_key = service.build_key(question="Q", tenant_id="t", project_id="p")
+    cache_key = service.build_key(question="Q", tenant_id="t", application_id="p")
     payload = {"answer": "cached", "sources": []}
 
-    await service.set(cache_key=cache_key, project_id="p", value=payload)
+    await service.set(cache_key=cache_key, application_id="p", value=payload)
     result = await service.get(cache_key)
 
     assert result == payload
@@ -87,12 +87,12 @@ async def test_query_cache_get_set_and_project_index():
 async def test_query_cache_invalidates_project_keys():
     redis = FakeRedis()
     service = query_cache_module.RedisQueryCache(redis=redis, ttl_seconds=3600)
-    first = service.build_key(question="Q1", tenant_id="t", project_id="p")
-    second = service.build_key(question="Q2", tenant_id="t", project_id="p")
-    await service.set(cache_key=first, project_id="p", value={"answer": "one"})
-    await service.set(cache_key=second, project_id="p", value={"answer": "two"})
+    first = service.build_key(question="Q1", tenant_id="t", application_id="p")
+    second = service.build_key(question="Q2", tenant_id="t", application_id="p")
+    await service.set(cache_key=first, application_id="p", value={"answer": "one"})
+    await service.set(cache_key=second, application_id="p", value={"answer": "two"})
 
-    await service.invalidate_project("p")
+    await service.invalidate_application("p")
 
     assert await service.get(first) is None
     assert await service.get(second) is None

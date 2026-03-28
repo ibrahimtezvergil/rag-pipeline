@@ -36,7 +36,7 @@ class FakeVectorStore:
 @pytest.mark.asyncio
 async def test_run_ingest_job_processes_async_job(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_load(source_type, source_ref):
@@ -72,13 +72,13 @@ async def test_run_ingest_job_processes_async_job(
             source_ref="https://example.com/article",
             mode="async",
         ),
-        seeded_project["project_id"],
+        seeded_application["application_id"],
     )
 
     payload = {
         "document_id": created["document_id"],
         "ingestion_job_id": created["ingestion_job_id"],
-        "project_id": str(seeded_project["project_id"]),
+        "application_id": str(seeded_application["application_id"]),
         "source_type": "web",
         "source_ref": "https://example.com/article",
     }
@@ -107,16 +107,16 @@ async def test_run_ingest_job_processes_async_job(
     assert vector_store.collections_ensured == 1
     assert len(vector_store.upsert_calls) == 1
     assert vector_store.upsert_calls[0]["chunks"][0]["content"] == "Example article body"
-    assert vector_store.upsert_calls[0]["chunks"][0]["tenant_id"] == str(seeded_project["tenant_id"])
+    assert vector_store.upsert_calls[0]["chunks"][0]["tenant_id"] == str(seeded_application["tenant_id"])
     assert vector_store.upsert_calls[0]["chunks"][0]["scope_type"] == "project"
-    assert vector_store.upsert_calls[0]["chunks"][0]["scope_id"] == str(seeded_project["project_id"])
+    assert vector_store.upsert_calls[0]["chunks"][0]["scope_id"] == str(seeded_application["application_id"])
     assert vector_store.upsert_calls[0]["chunks"][0]["sparse_vector"]["indices"]
 
 
 @pytest.mark.asyncio
 async def test_run_ingest_job_creates_parent_child_chunks(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_load(source_type, source_ref):
@@ -149,13 +149,13 @@ async def test_run_ingest_job_creates_parent_child_chunks(
             source_ref="https://example.com/article",
             mode="async",
         ),
-        seeded_project["project_id"],
+        seeded_application["application_id"],
     )
 
     payload = {
         "document_id": created["document_id"],
         "ingestion_job_id": created["ingestion_job_id"],
-        "project_id": str(seeded_project["project_id"]),
+        "application_id": str(seeded_application["application_id"]),
         "source_type": "web",
         "source_ref": "https://example.com/article",
     }
@@ -174,7 +174,7 @@ async def test_run_ingest_job_creates_parent_child_chunks(
 @pytest.mark.asyncio
 async def test_run_ingest_job_records_retry_and_raises_retry(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def failing_load(source_type, source_ref):
@@ -189,13 +189,13 @@ async def test_run_ingest_job_records_retry_and_raises_retry(
             source_ref="https://example.com/article",
             mode="async",
         ),
-        seeded_project["project_id"],
+        seeded_application["application_id"],
     )
 
     payload = {
         "document_id": created["document_id"],
         "ingestion_job_id": created["ingestion_job_id"],
-        "project_id": str(seeded_project["project_id"]),
+        "application_id": str(seeded_application["application_id"]),
         "source_type": "web",
         "source_ref": "https://example.com/article",
     }
@@ -216,7 +216,7 @@ async def test_run_ingest_job_records_retry_and_raises_retry(
 @pytest.mark.asyncio
 async def test_run_ingest_job_marks_failure_after_final_retry(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def failing_load(source_type, source_ref):
@@ -231,13 +231,13 @@ async def test_run_ingest_job_marks_failure_after_final_retry(
             source_ref="https://example.com/report.pdf",
             mode="async",
         ),
-        seeded_project["project_id"],
+        seeded_application["application_id"],
     )
 
     payload = {
         "document_id": created["document_id"],
         "ingestion_job_id": created["ingestion_job_id"],
-        "project_id": str(seeded_project["project_id"]),
+        "application_id": str(seeded_application["application_id"]),
         "source_type": "pdf",
         "source_ref": "https://example.com/report.pdf",
     }
@@ -273,7 +273,7 @@ async def test_run_stale_reembed_scan_calls_service():
 @pytest.mark.asyncio
 async def test_run_ingest_job_triggers_callback_on_completion(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     callbacks: list[dict[str, object]] = []
@@ -308,13 +308,13 @@ async def test_run_ingest_job_triggers_callback_on_completion(
             callback_url="https://example.com/callback",
             mode="async",
         ),
-        seeded_project["project_id"],
+        seeded_application["application_id"],
     )
 
     payload = {
         "document_id": created["document_id"],
         "ingestion_job_id": created["ingestion_job_id"],
-        "project_id": str(seeded_project["project_id"]),
+        "application_id": str(seeded_application["application_id"]),
         "source_type": "web",
         "source_ref": "https://example.com/article",
         "callback_url": "https://example.com/callback",
@@ -329,7 +329,7 @@ async def test_run_ingest_job_triggers_callback_on_completion(
 @pytest.mark.asyncio
 async def test_run_ingest_job_triggers_callback_on_final_failure_without_breaking_result(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     callbacks: list[dict[str, object]] = []
@@ -356,13 +356,13 @@ async def test_run_ingest_job_triggers_callback_on_final_failure_without_breakin
             callback_url="https://example.com/callback",
             mode="async",
         ),
-        seeded_project["project_id"],
+        seeded_application["application_id"],
     )
 
     payload = {
         "document_id": created["document_id"],
         "ingestion_job_id": created["ingestion_job_id"],
-        "project_id": str(seeded_project["project_id"]),
+        "application_id": str(seeded_application["application_id"]),
         "source_type": "web",
         "source_ref": "https://example.com/article",
         "callback_url": "https://example.com/callback",
@@ -376,7 +376,7 @@ async def test_run_ingest_job_triggers_callback_on_final_failure_without_breakin
 @pytest.mark.asyncio
 async def test_run_ingest_job_records_audio_clip_rows(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_load(source_type, source_ref):
@@ -437,13 +437,13 @@ async def test_run_ingest_job_records_audio_clip_rows(
             source_ref="https://example.com/voice.mp3",
             mode="async",
         ),
-        seeded_project["project_id"],
+        seeded_application["application_id"],
     )
 
     payload = {
         "document_id": created["document_id"],
         "ingestion_job_id": created["ingestion_job_id"],
-        "project_id": str(seeded_project["project_id"]),
+        "application_id": str(seeded_application["application_id"]),
         "source_type": "audio",
         "source_ref": "https://example.com/voice.mp3",
     }
@@ -465,7 +465,7 @@ async def test_run_ingest_job_records_audio_clip_rows(
 @pytest.mark.asyncio
 async def test_run_ingest_job_enriches_audio_chunks_with_transcript_metadata(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_load(source_type, source_ref):
@@ -545,13 +545,13 @@ async def test_run_ingest_job_enriches_audio_chunks_with_transcript_metadata(
             source_ref="https://example.com/voice.mp3",
             mode="async",
         ),
-        seeded_project["project_id"],
+        seeded_application["application_id"],
     )
 
     payload = {
         "document_id": created["document_id"],
         "ingestion_job_id": created["ingestion_job_id"],
-        "project_id": str(seeded_project["project_id"]),
+        "application_id": str(seeded_application["application_id"]),
         "source_type": "audio",
         "source_ref": "https://example.com/voice.mp3",
     }
@@ -572,7 +572,7 @@ async def test_run_ingest_job_enriches_audio_chunks_with_transcript_metadata(
 @pytest.mark.asyncio
 async def test_run_ingest_job_keeps_audio_summary_when_metadata_unavailable(
     integration_session,
-    seeded_project,
+    seeded_application,
     monkeypatch,
 ):
     async def fake_load(source_type, source_ref):
@@ -636,13 +636,13 @@ async def test_run_ingest_job_keeps_audio_summary_when_metadata_unavailable(
             source_ref="https://example.com/voice.mp3",
             mode="async",
         ),
-        seeded_project["project_id"],
+        seeded_application["application_id"],
     )
 
     payload = {
         "document_id": created["document_id"],
         "ingestion_job_id": created["ingestion_job_id"],
-        "project_id": str(seeded_project["project_id"]),
+        "application_id": str(seeded_application["application_id"]),
         "source_type": "audio",
         "source_ref": "https://example.com/voice.mp3",
     }

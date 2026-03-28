@@ -6,20 +6,20 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.db import RagChunk, RagChunkDiffLog, RagDocument, RagIngestionJob, RagProject, RagSyncCheckpoint
+from app.models.db import RagChunk, RagChunkDiffLog, RagDocument, RagIngestionJob, RagApplication, RagSyncCheckpoint
 
 
 class IngestionRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_project(self, project_id: uuid.UUID) -> RagProject | None:
-        return await self.session.get(RagProject, project_id)
+    async def get_application(self, application_id: uuid.UUID) -> RagApplication | None:
+        return await self.session.get(RagApplication, application_id)
 
     async def create_document(
         self,
         *,
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
         tenant_id: uuid.UUID,
         source_type: str,
         source_ref: str,
@@ -32,7 +32,7 @@ class IngestionRepository:
         source_connector_id: uuid.UUID | None = None,
     ) -> RagDocument:
         document = RagDocument(
-            project_id=project_id,
+            application_id=application_id,
             tenant_id=tenant_id,
             source_type=source_type,
             source_ref=source_ref,
@@ -50,13 +50,13 @@ class IngestionRepository:
 
     async def get_latest_document_by_source_ref(
         self,
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
         source_ref: str,
     ) -> RagDocument | None:
         result = await self.session.scalars(
             select(RagDocument)
             .where(
-                RagDocument.project_id == project_id,
+                RagDocument.application_id == application_id,
                 RagDocument.source_ref == source_ref,
                 RagDocument.status != "deleted",
             )
@@ -68,19 +68,19 @@ class IngestionRepository:
     async def list_latest_documents(self) -> list[RagDocument]:
         latest_versions = (
             select(
-                RagDocument.project_id.label("project_id"),
+                RagDocument.application_id.label("application_id"),
                 RagDocument.source_ref.label("source_ref"),
                 func.max(RagDocument.version).label("max_version"),
             )
             .where(RagDocument.status != "deleted")
-            .group_by(RagDocument.project_id, RagDocument.source_ref)
+            .group_by(RagDocument.application_id, RagDocument.source_ref)
             .subquery()
         )
         result = await self.session.scalars(
             select(RagDocument)
             .join(
                 latest_versions,
-                (RagDocument.project_id == latest_versions.c.project_id)
+                (RagDocument.application_id == latest_versions.c.application_id)
                 & (RagDocument.source_ref == latest_versions.c.source_ref)
                 & (RagDocument.version == latest_versions.c.max_version),
             )

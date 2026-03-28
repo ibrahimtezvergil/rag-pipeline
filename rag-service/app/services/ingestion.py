@@ -46,9 +46,9 @@ class IngestionService:
     async def create_ingestion_job(
         self,
         payload: IngestRequest,
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
     ) -> dict[str, str]:
-        project = await self.repository.get_project(project_id)
+        project = await self.repository.get_application(application_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
@@ -58,7 +58,7 @@ class IngestionService:
         initial_status = "indexing" if payload.mode == "sync" else "pending"
         job_status = "running" if payload.mode == "sync" else "pending"
         document = await self.repository.create_document(
-            project_id=project.id,
+            application_id=project.id,
             tenant_id=project.tenant_id,
             source_type=payload.source_type,
             source_ref=source_ref,
@@ -94,7 +94,7 @@ class IngestionService:
         update_current_observation(
             metadata={
                 "tenant_id": str(project.tenant_id),
-                "project_id": str(project.id),
+                "application_id": str(project.id),
                 "document_id": str(document.id),
                 "source_type": payload.source_type,
                 "mode": payload.mode,
@@ -124,7 +124,7 @@ class IngestionService:
                 {
                     "document_id": str(document.id),
                     "ingestion_job_id": str(job.id),
-                    "project_id": str(project.id),
+                    "application_id": str(project.id),
                     "source_type": payload.source_type,
                     "source_ref": self._source_ref(payload),
                     **({"callback_url": str(payload.callback_url)} if payload.callback_url else {}),
@@ -144,14 +144,14 @@ class IngestionService:
     async def create_ingestion_batch(
         self,
         payloads: list[IngestRequest],
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
     ) -> list[dict[str, str]]:
         if any(payload.mode != "async" for payload in payloads):
             raise HTTPException(status_code=400, detail="Batch ingestion only supports async mode")
 
         results: list[dict[str, str]] = []
         for payload in payloads:
-            result = await self.create_ingestion_job(payload, project_id)
+            result = await self.create_ingestion_job(payload, application_id)
             results.append(result)
         return results
 
@@ -236,7 +236,7 @@ class IngestionService:
         point_ids = [str(chunk.qdrant_point_id) for chunk in chunks if chunk.qdrant_point_id is not None]
         await self.vector_store.delete_points(point_ids)
         await self.repository.commit()
-        await self.query_cache.invalidate_project(str(document.project_id))
+        await self.query_cache.invalidate_application(str(document.application_id))
 
         return {
             "document_id": str(document.id),
@@ -263,7 +263,7 @@ class IngestionService:
                 continue
 
             payload = self._payload_from_document(document)
-            await self.create_ingestion_job(payload, document.project_id)
+            await self.create_ingestion_job(payload, document.application_id)
             stale_document_count += 1
 
         return {"stale_document_count": stale_document_count}
@@ -348,7 +348,7 @@ class IngestionService:
             query_vector=vector,
             tenant_id=str(document.tenant_id),
             scope_type=document.metadata_json.get("scope_type", "project"),
-            scope_id=document.metadata_json.get("scope_id", str(document.project_id)),
+            scope_id=document.metadata_json.get("scope_id", str(document.application_id)),
             entity_id=document.metadata_json.get("entity_id"),
             snapshot_date=document.metadata_json.get("snapshot_date"),
             tags=document.metadata_json.get("tags"),
@@ -460,7 +460,7 @@ class IngestionService:
                     "chunk_id": str(chunk.id),
                     "tenant_id": str(document.tenant_id),
                     "scope_type": document.metadata_json.get("scope_type", "project"),
-                    "scope_id": document.metadata_json.get("scope_id", str(document.project_id)),
+                    "scope_id": document.metadata_json.get("scope_id", str(document.application_id)),
                     "origin": document.metadata_json.get("origin"),
                     "entity_type": document.metadata_json.get("entity_type"),
                     "entity_id": document.metadata_json.get("entity_id"),
@@ -488,7 +488,7 @@ class IngestionService:
                 "ingestion.chunk_indexed",
                 {
                     "tenant_id": str(document.tenant_id),
-                    "project_id": str(document.project_id),
+                    "application_id": str(document.application_id),
                     "document_id": str(document.id),
                     "chunk_id": str(chunk.id),
                     "chunk_index": row_index,
@@ -518,7 +518,7 @@ class IngestionService:
         await self.repository.commit()
         await self._update_sync_checkpoint(document)
         await self._supersede_previous_document(document.previous_document_id)
-        await self.query_cache.invalidate_project(str(document.project_id))
+        await self.query_cache.invalidate_application(str(document.application_id))
 
     def _build_related_chunk_map(self, chunks) -> dict[uuid.UUID, list[uuid.UUID]]:
         child_chunks = [chunk for chunk in chunks if getattr(chunk, "parent_chunk_id", None) is not None]

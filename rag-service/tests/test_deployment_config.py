@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from app.models.db import RagApplication
+
 
 def test_compose_routes_runtime_services_via_pgbouncer():
     compose = Path(__file__).resolve().parents[1] / "docker-compose.yml"
@@ -108,3 +110,21 @@ def test_staging_runbook_exists_with_migration_and_smoke_steps():
     assert "/health" in content
     assert "/ingest" in content
     assert "/query" in content
+
+
+def test_models_expose_rag_application():
+    assert RagApplication.__tablename__ == "rag_applications"
+
+
+def test_application_refactor_migration_renames_projects_table_and_columns():
+    migration = (
+        Path(__file__).resolve().parents[1]
+        / "migrations"
+        / "versions"
+        / "008_refactor_projects_to_applications.py"
+    )
+    content = migration.read_text()
+
+    assert 'op.rename_table("rag_projects", "rag_applications")' in content
+    assert 'op.alter_column("rag_documents", "project_id", new_column_name="application_id")' in content
+    assert 'op.alter_column("rag_schedules", "project_id", new_column_name="application_id")' in content

@@ -20,7 +20,7 @@ from app.models.db import (
     RagEvaluationRun,
     RagEvaluationSample,
     RagIngestionJob,
-    RagProject,
+    RagApplication,
     RagSchedule,
     RagSyncCheckpoint,
     RagTenant,
@@ -52,7 +52,7 @@ async def client(app):
 def valid_headers() -> dict[str, str]:
     return {
         "X-API-Key": "test-key-1",
-        "X-Project-ID": str(uuid4()),
+        "X-Application-ID": str(uuid4()),
     }
 
 
@@ -82,7 +82,7 @@ async def integration_session() -> AsyncIterator[AsyncSession]:
                 "rag_chunks, "
                 "rag_ingestion_jobs, "
                 "rag_documents, "
-                "rag_projects, "
+                "rag_applications, "
                 "rag_tenants "
                 "RESTART IDENTITY CASCADE"
             )
@@ -95,12 +95,12 @@ async def integration_session() -> AsyncIterator[AsyncSession]:
 
 
 @pytest.fixture
-async def seeded_project(integration_session: AsyncSession):
+async def seeded_application(integration_session: AsyncSession):
     tenant = RagTenant(name="Test Tenant", api_key_hash="hashed-key")
     integration_session.add(tenant)
     await integration_session.flush()
 
-    project = RagProject(
+    project = RagApplication(
         id=uuid4(),
         tenant_id=tenant.id,
         name="Test Project",
@@ -108,10 +108,10 @@ async def seeded_project(integration_session: AsyncSession):
     )
     integration_session.add(project)
     await integration_session.commit()
-    project_row = await integration_session.get(RagProject, project.id)
+    project_row = await integration_session.get(RagApplication, project.id)
     assert project_row is not None
 
     return {
         "tenant_id": tenant.id,
-        "project_id": project.id,
+        "application_id": project.id,
     }

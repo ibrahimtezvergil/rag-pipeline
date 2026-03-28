@@ -16,8 +16,8 @@ from app.services.tracing import observe, update_current_observation
 router = APIRouter()
 
 
-def _parse_project_id(raw_project_id: str) -> uuid.UUID:
-    return uuid.UUID(raw_project_id)
+def _parse_application_id(raw_application_id: str) -> uuid.UUID:
+    return uuid.UUID(raw_application_id)
 
 
 def _get_query_service(
@@ -49,17 +49,17 @@ async def query(
     _: None = Depends(query_rate_limit),
     service: QueryService = Depends(_get_query_service),
 ):
-    project_id = _parse_project_id(request.state.project_id)
+    application_id = _parse_application_id(request.state.application_id)
     update_current_observation(
         metadata={
-            "project_id": str(project_id),
+            "application_id": str(application_id),
             "endpoint": "query",
             "retrieval_mode": payload.retrieval_mode,
         }
     )
     result = await service.answer_question(
         payload.question,
-        project_id,
+        application_id,
         retrieval_mode=payload.retrieval_mode,
         collections=payload.collections,
         merge_strategy=payload.merge_strategy,
@@ -83,17 +83,17 @@ async def chat(
     _: None = Depends(chat_rate_limit),
     service: ChatService = Depends(_get_chat_service),
 ):
-    project_id = _parse_project_id(request.state.project_id)
+    application_id = _parse_application_id(request.state.application_id)
     update_current_observation(
         metadata={
-            "project_id": str(project_id),
+            "application_id": str(application_id),
             "endpoint": "chat",
             "session_id_present": bool(payload.session_id),
         }
     )
     result = await service.reply(
         payload.message,
-        project_id,
+        application_id,
         session_id=payload.session_id,
     )
     return ChatResponse.model_validate(result)

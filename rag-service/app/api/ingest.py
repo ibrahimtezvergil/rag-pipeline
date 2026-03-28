@@ -22,8 +22,8 @@ from app.services.tracing import observe, update_current_observation
 router = APIRouter()
 
 
-def _parse_project_id(raw_project_id: str) -> uuid.UUID:
-    return uuid.UUID(raw_project_id)
+def _parse_application_id(raw_application_id: str) -> uuid.UUID:
+    return uuid.UUID(raw_application_id)
 
 
 def _get_ingestion_service(
@@ -51,16 +51,16 @@ async def create_ingest(
     if mode is not None:
         payload = payload.model_copy(update={"mode": mode})
 
-    project_id = _parse_project_id(request.state.project_id)
+    application_id = _parse_application_id(request.state.application_id)
     update_current_observation(
         metadata={
-            "project_id": str(project_id),
+            "application_id": str(application_id),
             "endpoint": "ingest",
             "source_type": payload.source_type,
             "mode": payload.mode,
         }
     )
-    result = await service.create_ingestion_job(payload, project_id)
+    result = await service.create_ingestion_job(payload, application_id)
 
     response.status_code = (
         status.HTTP_201_CREATED if result["mode"] == "sync" else status.HTTP_202_ACCEPTED
@@ -80,15 +80,15 @@ async def create_ingest_batch(
     if any(item.mode != "async" for item in payload.items):
         raise HTTPException(status_code=400, detail="Batch ingestion only supports async mode")
 
-    project_id = _parse_project_id(request.state.project_id)
+    application_id = _parse_application_id(request.state.application_id)
     update_current_observation(
         metadata={
-            "project_id": str(project_id),
+            "application_id": str(application_id),
             "endpoint": "ingest_batch",
             "item_count": len(payload.items),
         }
     )
-    items = await service.create_ingestion_batch(payload.items, project_id)
+    items = await service.create_ingestion_batch(payload.items, application_id)
 
     response.status_code = status.HTTP_202_ACCEPTED
     return IngestBatchResponse(items=[IngestResponse.model_validate(item) for item in items])

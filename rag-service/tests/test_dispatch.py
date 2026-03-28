@@ -26,7 +26,7 @@ async def test_arq_dispatcher_enqueues_named_ingest_job():
     payload = {
         "document_id": "doc-1",
         "ingestion_job_id": "job-1",
-        "project_id": "project-1",
+        "application_id": "project-1",
         "source_type": "pdf",
         "source_ref": "https://example.com/report.pdf",
     }

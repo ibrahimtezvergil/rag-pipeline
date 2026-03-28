@@ -9,7 +9,7 @@ from app.services.evaluations import EvaluationService
 @pytest.mark.asyncio
 async def test_evaluation_service_scores_completed_run():
     run_id = uuid4()
-    project_id = uuid4()
+    application_id = uuid4()
 
     class FakeSample:
         def __init__(self, question, ground_truth, reference_context):
@@ -30,7 +30,7 @@ async def test_evaluation_service_scores_completed_run():
             self.run_update = None
 
         async def get_run(self, run_uuid):
-            return SimpleNamespace(id=run_uuid, project_id=project_id, status="pending")
+            return SimpleNamespace(id=run_uuid, application_id=application_id, status="pending")
 
         async def list_samples(self, run_uuid):
             return self.samples
@@ -42,7 +42,7 @@ async def test_evaluation_service_scores_completed_run():
             self.run_update = kwargs
 
     class FakeQueryService:
-        async def answer_question(self, question, project_id, **kwargs):
+        async def answer_question(self, question, application_id, **kwargs):
             return {
                 "answer": "INV-1001 was paid.",
                 "retrieval_context": [

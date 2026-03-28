@@ -6,15 +6,15 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.db import RagProject, RagSchedule, RagSyncCheckpoint
+from app.models.db import RagApplication, RagSchedule, RagSyncCheckpoint
 
 
 class ScheduleRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_project(self, project_id: uuid.UUID) -> RagProject | None:
-        return await self.session.get(RagProject, project_id)
+    async def get_application(self, application_id: uuid.UUID) -> RagApplication | None:
+        return await self.session.get(RagApplication, application_id)
 
     async def get_schedule(self, schedule_id: uuid.UUID) -> RagSchedule | None:
         return await self.session.get(RagSchedule, schedule_id)
@@ -30,7 +30,7 @@ class ScheduleRepository:
     async def upsert_schedule(
         self,
         *,
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
         tenant_id: uuid.UUID,
         source_type: str,
         source_ref: str | None,
@@ -41,7 +41,7 @@ class ScheduleRepository:
     ) -> RagSchedule:
         result = await self.session.scalars(
             select(RagSchedule).where(
-                RagSchedule.project_id == project_id,
+                RagSchedule.application_id == application_id,
                 RagSchedule.source_type == source_type,
                 RagSchedule.source_ref == source_ref,
                 RagSchedule.source_connector_id == source_connector_id,
@@ -50,7 +50,7 @@ class ScheduleRepository:
         schedule = result.first()
         if schedule is None:
             schedule = RagSchedule(
-                project_id=project_id,
+                application_id=application_id,
                 tenant_id=tenant_id,
                 source_type=source_type,
                 source_ref=source_ref,

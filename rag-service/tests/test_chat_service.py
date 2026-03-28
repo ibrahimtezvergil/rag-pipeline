@@ -18,7 +18,7 @@ class FakeChatStore:
 
 
 class FakeQueryService:
-    async def answer_question(self, question: str, project_id):
+    async def answer_question(self, question: str, application_id):
         return {
             "answer": f"cevap:{question}",
             "retrieval_mode": "semantic_qdrant",

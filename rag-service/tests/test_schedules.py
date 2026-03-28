@@ -12,7 +12,7 @@ from app.services.schedules import ScheduleService, next_cron_run_after
 @pytest.mark.asyncio
 async def test_create_schedule_persists_schedule_row(
     integration_session,
-    seeded_project,
+    seeded_application,
 ):
     service = ScheduleService(integration_session, ingestion_service=SimpleNamespace())
 
@@ -25,13 +25,13 @@ async def test_create_schedule_persists_schedule_row(
                 "source_connector_id": "00000000-0000-0000-0000-000000000111",
             },
         ),
-        seeded_project["project_id"],
+        seeded_application["application_id"],
     )
 
     schedule = await service.repository.get_schedule(UUID(result["schedule_id"]))
     assert schedule is not None
-    assert schedule.project_id == seeded_project["project_id"]
-    assert schedule.tenant_id == seeded_project["tenant_id"]
+    assert schedule.application_id == seeded_application["application_id"]
+    assert schedule.tenant_id == seeded_application["tenant_id"]
     assert schedule.cron_expr == "*/30 * * * *"
     assert schedule.source_type == "web"
     assert schedule.source_ref == "https://example.com/article"
@@ -42,13 +42,13 @@ async def test_create_schedule_persists_schedule_row(
 @pytest.mark.asyncio
 async def test_run_due_schedules_creates_async_ingestion_with_checkpoint(
     integration_session,
-    seeded_project,
+    seeded_application,
 ):
     calls: list[tuple[object, object]] = []
 
     class FakeIngestionService:
-        async def create_ingestion_job(self, payload, project_id):
-            calls.append((payload, project_id))
+        async def create_ingestion_job(self, payload, application_id):
+            calls.append((payload, application_id))
             return {
                 "document_id": "doc-1",
                 "ingestion_job_id": "job-1",
@@ -59,8 +59,8 @@ async def test_run_due_schedules_creates_async_ingestion_with_checkpoint(
 
     service = ScheduleService(integration_session, ingestion_service=FakeIngestionService())
     schedule = await service.repository.upsert_schedule(
-        project_id=seeded_project["project_id"],
-        tenant_id=seeded_project["tenant_id"],
+        application_id=seeded_application["application_id"],
+        tenant_id=seeded_application["tenant_id"],
         source_type="web",
         source_ref="https://example.com/article",
         source_connector_id=UUID("00000000-0000-0000-0000-000000000111"),
@@ -83,8 +83,8 @@ async def test_run_due_schedules_creates_async_ingestion_with_checkpoint(
     result = await service.run_due_schedules(now=datetime(2026, 3, 23, 10, 0, tzinfo=UTC))
 
     assert result == {"scheduled_count": 1}
-    payload, project_id = calls[0]
-    assert project_id == seeded_project["project_id"]
+    payload, application_id = calls[0]
+    assert application_id == seeded_application["application_id"]
     assert payload.mode == "async"
     assert payload.cursor_state == {"cursor": "abc"}
     assert payload.source_connector_id == "00000000-0000-0000-0000-000000000111"

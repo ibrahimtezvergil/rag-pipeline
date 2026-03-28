@@ -55,4 +55,4 @@ def test_update_current_observation_swallows_client_errors(monkeypatch):
 
     monkeypatch.setattr(tracing_module, "_get_langfuse_client", lambda: FakeClient(), raising=False)
 
-    tracing_module.update_current_observation(metadata={"project_id": "project-1"})
+    tracing_module.update_current_observation(metadata={"application_id": "project-1"})

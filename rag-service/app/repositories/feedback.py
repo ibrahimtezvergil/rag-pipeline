@@ -6,20 +6,20 @@ from collections import Counter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.db import RagChunk, RagChunkFeedback, RagDocument, RagProject
+from app.models.db import RagChunk, RagChunkFeedback, RagDocument, RagApplication
 
 
 class FeedbackRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_project(self, project_id: uuid.UUID) -> RagProject | None:
-        return await self.session.get(RagProject, project_id)
+    async def get_application(self, application_id: uuid.UUID) -> RagApplication | None:
+        return await self.session.get(RagApplication, application_id)
 
-    async def get_project_chunks(
+    async def get_application_chunks(
         self,
         *,
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
         chunk_ids: list[uuid.UUID],
     ) -> list[RagChunk]:
         result = await self.session.scalars(
@@ -27,7 +27,7 @@ class FeedbackRepository:
             .join(RagDocument, RagChunk.document_id == RagDocument.id)
             .where(
                 RagChunk.id.in_(chunk_ids),
-                RagDocument.project_id == project_id,
+                RagDocument.application_id == application_id,
                 RagChunk.is_archived.is_(False),
             )
         )
@@ -37,7 +37,7 @@ class FeedbackRepository:
         self,
         *,
         tenant_id: uuid.UUID,
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
         chunks: list[RagChunk],
         rating: str,
         note: str | None,
@@ -47,7 +47,7 @@ class FeedbackRepository:
         for chunk in chunks:
             row = RagChunkFeedback(
                 tenant_id=tenant_id,
-                project_id=project_id,
+                application_id=application_id,
                 document_id=chunk.document_id,
                 chunk_id=chunk.id,
                 rating=rating,
@@ -62,14 +62,14 @@ class FeedbackRepository:
     async def get_feedback_summary(
         self,
         *,
-        project_id: uuid.UUID,
+        application_id: uuid.UUID,
         chunk_ids: list[uuid.UUID],
     ) -> dict[uuid.UUID, dict[str, int]]:
         if not chunk_ids:
             return {}
         result = await self.session.scalars(
             select(RagChunkFeedback).where(
-                RagChunkFeedback.project_id == project_id,
+                RagChunkFeedback.application_id == application_id,
                 RagChunkFeedback.chunk_id.in_(chunk_ids),
             )
         )
