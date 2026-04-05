@@ -37,7 +37,8 @@ class FakeQdrantClient:
 
     async def put(self, path, json):
         assert path == "/collections/crm_docs"
-        assert json["vectors"]["size"] == 768
+        assert json["vectors"]["dense"]["size"] == 768
+        assert "sparse" in json["sparse_vectors"]
         return DummyResponse({"result": True}, status_code=200)
 
 

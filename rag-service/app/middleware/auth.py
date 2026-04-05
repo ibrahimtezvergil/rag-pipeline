@@ -21,7 +21,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         api_key = request.headers.get("X-API-Key")
-        application_id = request.headers.get("X-Application-ID") or request.headers.get("X-Application-ID")
+        application_id = request.headers.get("X-Application-ID")
         if not api_key or not application_id:
             return JSONResponse(
                 status_code=401,
