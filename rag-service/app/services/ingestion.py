@@ -21,6 +21,7 @@ from app.services.embedder import (
     resolve_pdf_embedding,
 )
 from app.services.loaders import decode_base64_source, load_source
+from app.services.media import AudioClipSlicingError, slice_audio_clip_bytes
 from app.services.observability import emit_event
 from app.services.query_cache import RedisQueryCache
 from app.services.sparse_encoder import encode_sparse_text
@@ -624,13 +625,24 @@ class IngestionService:
                 audio_bytes=audio_bytes,
                 filename=title,
             )
-            for clip in list(metadata.get("clips") or []):
+            metadata["audio_metadata"]["segment_count"] = len(metadata["audio_metadata"].get("segments") or [])
+            metadata["audio_metadata"]["transcript_coverage_seconds"] = self._sum_segment_coverage(
+                list(metadata["audio_metadata"].get("segments") or [])
+            )
+            clips = list(metadata.get("clips") or [])
+            try:
+                clip_payloads = slice_audio_clip_bytes(audio_bytes, title, clips)
+            except AudioClipSlicingError:
+                clip_payloads = [{**clip, "audio_bytes": audio_bytes} for clip in clips]
+            for clip_payload in clip_payloads:
+                clip = {key: clip_payload[key] for key in ("clip_index", "start_second", "end_second")}
                 clip_label = f"{title} clip {clip['clip_index'] + 1}"
                 clip_summary = self._audio_clip_content(
                     title=title,
                     clip=clip,
                     audio_metadata=dict(metadata.get("audio_metadata") or {}),
                 )
+                fallback_label = f"{title} clip {int(clip['clip_index']) + 1} ({int(clip['start_second'])}-{int(clip['end_second'])}s)"
                 parent_index = len(chunk_rows)
                 chunk_rows.append(
                     {
@@ -651,31 +663,61 @@ class IngestionService:
                         "vector": [],
                     }
                 )
-                embedding = await embed_audio_content(
-                    audio_bytes=audio_bytes,
-                    title=clip_label,
-                    mime_type=mime_type,
-                )
-                vector_chunk_indices.append(len(chunk_rows))
-                chunk_rows.append(
-                    {
-                        "document_id": document.id,
-                        "chunk_index": len(chunk_rows),
-                        "parent_chunk_id": "__PARENT_INDEX__:" + str(parent_index),
-                        "modality": "audio",
-                        "token_count": 0,
-                        "page_number": None,
-                        "bbox": None,
-                        "section_title": clip_label,
-                        "acl": [],
-                        "embed_model": str(embedding.get("model") or ""),
-                        "embed_version": str(embedding.get("embed_version") or "v1"),
-                        "dimension": int(embedding.get("dimension") or len(embedding.get("values", []))),
-                        "content_hash": self._content_hash(clip_summary),
-                        "content": clip_summary,
-                        "vector": embedding["values"],
-                    }
-                )
+                try:
+                    embedding = await embed_audio_content(
+                        audio_bytes=clip_payload["audio_bytes"],
+                        title=clip_label,
+                        mime_type=mime_type,
+                    )
+                except Exception:
+                    embedding = None
+                if embedding is not None:
+                    vector_chunk_indices.append(len(chunk_rows))
+                    chunk_rows.append(
+                        {
+                            "document_id": document.id,
+                            "chunk_index": len(chunk_rows),
+                            "parent_chunk_id": "__PARENT_INDEX__:" + str(parent_index),
+                            "modality": "audio",
+                            "token_count": 0,
+                            "page_number": None,
+                            "bbox": None,
+                            "section_title": clip_label,
+                            "acl": [],
+                            "embed_model": str(embedding.get("model") or ""),
+                            "embed_version": str(embedding.get("embed_version") or "v1"),
+                            "dimension": int(embedding.get("dimension") or len(embedding.get("values", []))),
+                            "content_hash": self._content_hash(clip_summary),
+                            "content": clip_summary,
+                            "vector": embedding["values"],
+                        }
+                    )
+                if clip_summary.strip() and clip_summary != fallback_label:
+                    transcript_embedding = await embed_text_content(clip_summary, clip_label)
+                    vector_chunk_indices.append(len(chunk_rows))
+                    chunk_rows.append(
+                        {
+                            "document_id": document.id,
+                            "chunk_index": len(chunk_rows),
+                            "parent_chunk_id": "__PARENT_INDEX__:" + str(parent_index),
+                            "modality": "text",
+                            "token_count": len(clip_summary.split()),
+                            "page_number": None,
+                            "bbox": None,
+                            "section_title": clip_label,
+                            "acl": [],
+                            "embed_model": str(transcript_embedding.get("model") or ""),
+                            "embed_version": str(transcript_embedding.get("embed_version") or "v1"),
+                            "dimension": int(
+                                transcript_embedding.get("dimension")
+                                or len(transcript_embedding.get("values", []))
+                            ),
+                            "content_hash": self._content_hash(clip_summary),
+                            "content": clip_summary,
+                            "vector": transcript_embedding["values"],
+                            "sparse_vector": encode_sparse_text(clip_summary),
+                        }
+                    )
             return chunk_rows, vector_chunk_indices, []
 
         raw_chunks = build_chunks(document.source_type, content, metadata)
@@ -877,6 +919,14 @@ class IngestionService:
             "transcript": metadata.get("transcript"),
             "segments": list(metadata.get("segments", [])),
         }
+
+    def _sum_segment_coverage(self, segments: list[dict[str, object]]) -> int:
+        total = 0
+        for segment in segments:
+            start_second = int(segment.get("start_second") or 0)
+            end_second = int(segment.get("end_second") or start_second)
+            total += max(0, end_second - start_second)
+        return total
 
     def _audio_clip_content(
         self,
