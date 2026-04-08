@@ -1,4 +1,5 @@
-from uuid import UUID
+from types import SimpleNamespace
+from uuid import UUID, uuid4
 
 import pytest
 from arq.worker import Retry
@@ -31,6 +32,41 @@ class FakeVectorStore:
 
     async def find_semantic_duplicate(self, **kwargs):
         return None
+
+
+def build_loaded_audio_payload(
+    *,
+    clips: list[dict[str, int]],
+    audio_metadata: dict[str, object] | None = None,
+    audio_bytes: bytes = b"ID3voice",
+) -> dict[str, object]:
+    return {
+        "content": "voice.mp3",
+        "metadata": {
+            "title": "voice.mp3",
+            "loader_strategy": "gemini_audio_clipped",
+            "mime_type": "audio/mpeg",
+            "binary_size_bytes": 1234,
+            "modality": "audio",
+            "url": "https://example.com/voice.mp3",
+            "duration_seconds": clips[-1]["end_second"] if clips else 1,
+            "clip_count": len(clips),
+            "clips": clips,
+            **({"audio_metadata": audio_metadata} if audio_metadata is not None else {}),
+        },
+        "audio_bytes": audio_bytes,
+        "chunk_count": len(clips),
+    }
+
+
+def build_audio_document() -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid4(),
+        title="voice.mp3",
+        source_ref="https://example.com/voice.mp3",
+        source_type="audio",
+        metadata_json={},
+    )
 
 
 @pytest.mark.asyncio
@@ -457,6 +493,8 @@ async def test_run_ingest_job_records_audio_clip_rows(
     assert document.status == "indexed"
     assert document.chunk_count == 3
     assert document.metadata_json["loader"]["clip_count"] == 3
+    assert document.metadata_json["audio_metadata"]["segment_count"] == 0
+    assert document.metadata_json["audio_metadata"]["transcript_coverage_seconds"] == 0
     assert len(chunks) == 6
     assert sum(1 for chunk in chunks if chunk.parent_chunk_id is not None) == 3
     assert all(chunk.modality == "audio" for chunk in chunks)
@@ -501,6 +539,22 @@ async def test_run_ingest_job_enriches_audio_chunks_with_transcript_metadata(
             "vector_dimension": 3,
         }
 
+    async def fake_embed_text(content, title, *, task_type="RETRIEVAL_DOCUMENT"):
+        assert content in {
+            "speaker one mentions invoice INV-1001",
+            "speaker two closes the call",
+        }
+        return {
+            "provider": "gemini",
+            "model": "gemini-text",
+            "task_type": task_type,
+            "embed_version": "gemini-text-3",
+            "status": "completed",
+            "values": [0.4, 0.5, 0.6],
+            "dimension": 3,
+            "vector_dimension": 3,
+        }
+
     async def fake_extract_audio_metadata(audio_bytes, *, filename=None):
         return {
             "status": "ok",
@@ -526,6 +580,7 @@ async def test_run_ingest_job_enriches_audio_chunks_with_transcript_metadata(
 
     monkeypatch.setattr(ingestion_service_module, "load_source", fake_load, raising=False)
     monkeypatch.setattr(ingestion_service_module, "embed_audio_content", fake_embed_audio, raising=False)
+    monkeypatch.setattr(ingestion_service_module, "embed_text_content", fake_embed_text, raising=False)
     monkeypatch.setattr(
         ingestion_service_module,
         "extract_audio_metadata",
@@ -560,13 +615,17 @@ async def test_run_ingest_job_enriches_audio_chunks_with_transcript_metadata(
     document = await service.repository.get_document(UUID(created["document_id"]))
     chunks = await service.repository.get_document_chunks(UUID(created["document_id"]))
     parent_chunks = [chunk for chunk in chunks if chunk.parent_chunk_id is None]
+    text_chunks = [chunk for chunk in chunks if chunk.parent_chunk_id is not None and chunk.modality == "text"]
 
     assert document is not None
     assert document.metadata_json["audio_metadata"]["status"] == "ok"
     assert document.metadata_json["audio_metadata"]["provider"] == "whisper"
     assert len(document.metadata_json["audio_metadata"]["segments"]) == 2
+    assert document.metadata_json["audio_metadata"]["segment_count"] == 2
+    assert document.metadata_json["audio_metadata"]["transcript_coverage_seconds"] == 43
     assert "invoice INV-1001" in parent_chunks[0].content
     assert "closes the call" in parent_chunks[1].content
+    assert len(text_chunks) == 2
 
 
 @pytest.mark.asyncio
@@ -654,4 +713,243 @@ async def test_run_ingest_job_keeps_audio_summary_when_metadata_unavailable(
 
     assert document is not None
     assert document.metadata_json["audio_metadata"]["status"] == "unavailable"
+    assert document.metadata_json["audio_metadata"]["segment_count"] == 0
+    assert document.metadata_json["audio_metadata"]["transcript_coverage_seconds"] == 0
     assert parent_chunks[0].content == "voice.mp3 clip 1 (0-95s)"
+
+
+@pytest.mark.asyncio
+async def test_run_ingest_job_embeds_each_audio_clip_with_clip_scoped_bytes(
+    monkeypatch,
+):
+    document = build_audio_document()
+    loaded = build_loaded_audio_payload(
+        clips=[
+            {"clip_index": 0, "start_second": 0, "end_second": 120},
+            {"clip_index": 1, "start_second": 120, "end_second": 240},
+        ]
+    )
+
+    embedded_payloads: list[bytes] = []
+
+    async def fake_embed_audio(audio_bytes, title, mime_type):
+        embedded_payloads.append(audio_bytes)
+        return {
+            "provider": "gemini",
+            "model": "gemini-test",
+            "task_type": "RETRIEVAL_DOCUMENT",
+            "embed_version": "gemini-test-3",
+            "status": "completed",
+            "values": [0.1, 0.2, 0.3],
+            "dimension": 3,
+            "vector_dimension": 3,
+        }
+
+    async def fake_extract_audio_metadata(audio_bytes, *, filename=None):
+        return {
+            "status": "unavailable",
+            "provider": "whisper",
+            "transcript": None,
+            "segments": [],
+        }
+
+    monkeypatch.setattr(ingestion_service_module, "embed_audio_content", fake_embed_audio, raising=False)
+    monkeypatch.setattr(ingestion_service_module, "extract_audio_metadata", fake_extract_audio_metadata, raising=False)
+    monkeypatch.setattr(
+        ingestion_service_module,
+        "slice_audio_clip_bytes",
+        lambda _binary, _filename, clips: [
+            {**clips[0], "audio_bytes": b"clip-a"},
+            {**clips[1], "audio_bytes": b"clip-b"},
+        ],
+        raising=False,
+    )
+
+    service = IngestionService(object(), dispatcher=FakeDispatcher(), vector_store=FakeVectorStore())
+
+    await service._build_chunk_rows(document, loaded)
+
+    assert embedded_payloads == [b"clip-a", b"clip-b"]
+
+
+@pytest.mark.asyncio
+async def test_run_ingest_job_creates_text_vector_for_transcript_backed_audio_clip(
+    monkeypatch,
+):
+    document = build_audio_document()
+    loaded = build_loaded_audio_payload(
+        clips=[{"clip_index": 0, "start_second": 0, "end_second": 120}]
+    )
+
+    async def fake_embed_audio(audio_bytes, title, mime_type):
+        return {
+            "provider": "gemini",
+            "model": "gemini-test",
+            "task_type": "RETRIEVAL_DOCUMENT",
+            "embed_version": "gemini-test-3",
+            "status": "completed",
+            "values": [0.1, 0.2, 0.3],
+            "dimension": 3,
+            "vector_dimension": 3,
+        }
+
+    async def fake_embed_text(content, title, *, task_type="RETRIEVAL_DOCUMENT"):
+        assert content == "segment text"
+        return {
+            "provider": "gemini",
+            "model": "gemini-text",
+            "task_type": task_type,
+            "embed_version": "gemini-text-3",
+            "status": "completed",
+            "values": [0.3, 0.4, 0.5],
+            "dimension": 3,
+            "vector_dimension": 3,
+        }
+
+    async def fake_extract_audio_metadata(audio_bytes, *, filename=None):
+        return {
+            "status": "ok",
+            "provider": "whisper",
+            "transcript": "segment text",
+            "segments": [
+                {
+                    "segment_index": 0,
+                    "start_second": 10,
+                    "end_second": 18,
+                    "text": "segment text",
+                    "speaker_label": None,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(ingestion_service_module, "embed_audio_content", fake_embed_audio, raising=False)
+    monkeypatch.setattr(ingestion_service_module, "embed_text_content", fake_embed_text, raising=False)
+    monkeypatch.setattr(ingestion_service_module, "extract_audio_metadata", fake_extract_audio_metadata, raising=False)
+
+    service = IngestionService(object(), dispatcher=FakeDispatcher(), vector_store=FakeVectorStore())
+
+    rows, _vector_indices, _diff = await service._build_chunk_rows(document, loaded)
+
+    assert any(row["modality"] == "text" and row["content"] == "segment text" for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_run_ingest_job_keeps_text_only_audio_chunk_when_audio_embed_fails(monkeypatch):
+    document = build_audio_document()
+    loaded = build_loaded_audio_payload(
+        clips=[{"clip_index": 0, "start_second": 0, "end_second": 120}]
+    )
+
+    async def fake_embed_audio(audio_bytes, title, mime_type):
+        raise RuntimeError("embed failed")
+
+    async def fake_embed_text(content, title, *, task_type="RETRIEVAL_DOCUMENT"):
+        assert content == "segment text"
+        return {
+            "provider": "gemini",
+            "model": "gemini-text",
+            "task_type": task_type,
+            "embed_version": "gemini-text-3",
+            "status": "completed",
+            "values": [0.3, 0.4, 0.5],
+            "dimension": 3,
+            "vector_dimension": 3,
+        }
+
+    async def fake_extract_audio_metadata(audio_bytes, *, filename=None):
+        return {
+            "status": "ok",
+            "provider": "whisper",
+            "transcript": "segment text",
+            "segments": [
+                {
+                    "segment_index": 0,
+                    "start_second": 10,
+                    "end_second": 18,
+                    "text": "segment text",
+                    "speaker_label": None,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(ingestion_service_module, "embed_audio_content", fake_embed_audio, raising=False)
+    monkeypatch.setattr(ingestion_service_module, "embed_text_content", fake_embed_text, raising=False)
+    monkeypatch.setattr(ingestion_service_module, "extract_audio_metadata", fake_extract_audio_metadata, raising=False)
+
+    service = IngestionService(object(), dispatcher=FakeDispatcher(), vector_store=FakeVectorStore())
+
+    rows, vector_indices, _diff = await service._build_chunk_rows(document, loaded)
+
+    assert any(row["modality"] == "text" and row["content"] == "segment text" for row in rows)
+    assert vector_indices
+
+
+@pytest.mark.asyncio
+async def test_run_ingest_job_records_audio_quality_metadata(monkeypatch):
+    document = build_audio_document()
+    loaded = build_loaded_audio_payload(
+        clips=[{"clip_index": 0, "start_second": 0, "end_second": 120}]
+    )
+
+    async def fake_embed_audio(audio_bytes, title, mime_type):
+        return {
+            "provider": "gemini",
+            "model": "gemini-test",
+            "task_type": "RETRIEVAL_DOCUMENT",
+            "embed_version": "gemini-test-3",
+            "status": "completed",
+            "values": [0.1, 0.2, 0.3],
+            "dimension": 3,
+            "vector_dimension": 3,
+        }
+
+    async def fake_extract_audio_metadata(audio_bytes, *, filename=None):
+        return {
+            "status": "ok",
+            "provider": "whisper",
+            "transcript": "a b",
+            "segments": [
+                {
+                    "segment_index": 0,
+                    "start_second": 0,
+                    "end_second": 8,
+                    "text": "a",
+                    "speaker_label": None,
+                },
+                {
+                    "segment_index": 1,
+                    "start_second": 10,
+                    "end_second": 20,
+                    "text": "b",
+                    "speaker_label": None,
+                },
+            ],
+        }
+
+    monkeypatch.setattr(ingestion_service_module, "embed_audio_content", fake_embed_audio, raising=False)
+    async def fake_embed_text(content, title, *, task_type="RETRIEVAL_DOCUMENT"):
+        return {
+            "provider": "gemini",
+            "model": "gemini-text",
+            "task_type": task_type,
+            "embed_version": "gemini-text-3",
+            "status": "completed",
+            "values": [0.3, 0.4, 0.5],
+            "dimension": 3,
+            "vector_dimension": 3,
+        }
+
+    monkeypatch.setattr(
+        ingestion_service_module,
+        "embed_text_content",
+        fake_embed_text,
+        raising=False,
+    )
+    monkeypatch.setattr(ingestion_service_module, "extract_audio_metadata", fake_extract_audio_metadata, raising=False)
+
+    service = IngestionService(object(), dispatcher=FakeDispatcher(), vector_store=FakeVectorStore())
+
+    await service._build_chunk_rows(document, loaded)
+
+    assert loaded["metadata"]["audio_metadata"]["segment_count"] == 2
+    assert loaded["metadata"]["audio_metadata"]["transcript_coverage_seconds"] == 18

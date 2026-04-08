@@ -372,6 +372,20 @@ async def test_load_audio_source_long_file_creates_120_second_windows(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_load_audio_source_stores_clip_ranges_from_real_duration(monkeypatch):
+    monkeypatch.setattr(loaders_module, "probe_audio_duration_seconds", lambda *_args, **_kwargs: 255)
+
+    result = await loaders_module.load_audio_source(
+        None,
+        source_bytes=b"ID3voice",
+        source_filename="voice.mp3",
+    )
+
+    assert result["metadata"]["duration_seconds"] == 255
+    assert result["metadata"]["clips"][-1] == {"clip_index": 2, "start_second": 240, "end_second": 255}
+
+
+@pytest.mark.asyncio
 async def test_load_pdf_source_uses_direct_strategy_for_small_pdf(monkeypatch):
     class FakeResponse:
         content = b"%PDF-fake"
